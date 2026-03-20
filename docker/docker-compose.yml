@@ -1,0 +1,53 @@
+version: "3.8"
+
+# docker-compose.yml
+# ------------------
+# Used for local development and testing before deploying to RunPod.
+#
+# To test WITH a GPU (Linux + NVIDIA drivers required):
+#   docker compose up
+#
+# To test WITHOUT a GPU (CPU-only, slower but functional):
+#   docker compose -f docker-compose.yml -f docker-compose.cpu.yml up
+#
+# First-time setup:
+#   1. Download models into the ./models directory (see README)
+#   2. Copy .env.example to .env and fill in values
+#   3. Run: docker compose up --build
+
+services:
+  sales-copilot-server:
+    build:
+      context: ..           # Build context is the project root (one level up from docker/)
+      dockerfile: docker/Dockerfile
+
+    ports:
+      - "8000:8000"         # Expose FastAPI on localhost:8000 for local testing
+
+    volumes:
+      # Mount models directory — models are downloaded once and reused across runs.
+      # This avoids baking large files into the image.
+      - ../models:/app/models
+
+      # Mount config so you can update the sales playbook without rebuilding the image.
+      # In production on RunPod you'd bake config in, but for dev this is convenient.
+      - ../config:/app/config
+
+    environment:
+      - WHISPER_MODEL=medium          # Use medium for local testing (faster, less VRAM)
+      - LLM_MODEL_PATH=/app/models/mistral-7b-instruct-v0.2.Q4_K_M.gguf
+      - LLM_MAX_TOKENS=300
+      - SERVER_PORT=8000
+      - SERVER_BIND_HOST=0.0.0.0
+
+    # GPU configuration — requires nvidia-container-toolkit on the host.
+    # Remove this section if testing on CPU only.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+
+    restart: unless-stopped     # Restart on crash, but not on manual docker compose down

@@ -1,0 +1,37 @@
+# .dockerignore
+# Keeps the Docker build context lean — Docker won't send these to the daemon.
+# Smaller context = faster builds.
+
+# Never send credentials
+.env
+
+# Model weights — mounted as volumes, not baked into image
+models/
+*.gguf
+*.bin
+*.pt
+
+# Client code — not needed in the server image
+client/
+requirements-client.txt
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Git
+.git/
+.gitignore
+
+# Mac
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Dev docs
+*.md
+Sales-Copilot-Project-Overview.md
