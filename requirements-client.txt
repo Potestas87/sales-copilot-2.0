@@ -1,0 +1,13 @@
+# ── Audio capture ─────────────────────────────────────────────────────────────
+sounddevice>=0.4.6         # Cross-platform audio I/O (reads from mic + BlackHole)
+numpy>=1.24.0              # Audio data is handled as numpy float32 arrays
+
+# ── Voice activity detection ──────────────────────────────────────────────────
+torch>=2.0.0               # Required by silero-vad
+torchaudio>=2.0.0          # Audio utilities used alongside silero-vad
+
+# ── WebSocket client ──────────────────────────────────────────────────────────
+websockets>=12.0           # Async WebSocket library for streaming to the server
+
+# ── Config & environment ──────────────────────────────────────────────────────
+python-dotenv>=1.0.0       # Loads .env file into os.environ
