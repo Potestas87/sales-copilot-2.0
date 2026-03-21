@@ -1,0 +1,16 @@
+# ── API server ────────────────────────────────────────────────────────────────
+fastapi>=0.110.0           # Async web framework — handles WebSocket connections
+uvicorn[standard]>=0.29.0  # ASGI server that runs FastAPI (websockets extra included)
+
+# ── Transcription ─────────────────────────────────────────────────────────────
+faster-whisper>=1.0.0      # CTranslate2-optimised Whisper — 4x faster, less VRAM
+
+# ── LLM inference ─────────────────────────────────────────────────────────────
+llama-cpp-python>=0.2.0    # Python bindings for llama.cpp — runs quantised GGUF models
+                            # Install with GPU support: CMAKE_ARGS="-DLLAMA_CUDA=on" pip install llama-cpp-python
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+numpy>=1.24.0              # Audio arrays passed between transcription and inference
+pyyaml>=6.0.0              # Loads the sales playbook YAML config
+python-dotenv>=1.0.0       # Loads .env into os.environ
+packaging>=23.0            # Required by faster-whisper and other dependencies
