@@ -9,7 +9,7 @@ This module sits between the VAD filter and the display UI:
 
 Responsibilities:
   - Open and maintain a persistent WebSocket connection to the server
-  - Send audio utterances as raw bytes when the VAD emits them
+  - Send audio utterances as speaker-labeled JSON envelopes when VAD emits them
   - Receive JSON responses (transcript + suggestion) from the server
   - Fire a callback so the display layer can show suggestions immediately
   - Reconnect automatically if the connection drops mid-call
@@ -21,21 +21,24 @@ Why async?
 """
 
 import asyncio
-import json
 import logging
 import os
 import threading
+import time
 from typing import Callable, Optional
 
 import numpy as np
 import websockets
 from dotenv import load_dotenv
 
+from protocol import InferenceMessage, UtteranceMessage
+
 load_dotenv()
 log = logging.getLogger("websocket_client")
 
 RECONNECT_DELAY = 3    # Seconds to wait before attempting reconnection
 MAX_RETRIES     = 10   # Maximum reconnection attempts before giving up
+SEND_QUEUE_MAXSIZE = int(os.getenv("WS_SEND_QUEUE_MAXSIZE", 64))
 
 
 class WebSocketClient:
@@ -89,27 +92,52 @@ class WebSocketClient:
         # The VAD runs in a sync thread; we can't call async functions from there directly.
         # Instead, VAD puts audio into this queue and the async loop drains it.
         self._send_queue: asyncio.Queue = None
+        self._send_queue_maxsize = SEND_QUEUE_MAXSIZE
+
+        # Transport metrics (useful for tuning queue size and reconnect behavior)
+        self._metrics_lock = threading.Lock()
+        self._metrics = {
+            "enqueued": 0,
+            "sent": 0,
+            "received": 0,
+            "dropped_not_running": 0,
+            "dropped_loop_unavailable": 0,
+            "dropped_queue_full": 0,
+            "send_failures": 0,
+        }
 
     # ── Public API (called from sync threads) ─────────────────────────────────
-    def send(self, audio: np.ndarray) -> None:
+    def send(self, audio: np.ndarray, speaker: str = "customer", sample_rate: int = 16000) -> None:
         """
         Queue an audio utterance for sending to the server.
         Thread-safe — can be called from the VAD thread or anywhere else.
 
-        The audio is serialised to bytes here so the conversion happens
-        on the calling thread, not the asyncio event loop.
+        Audio is serialized into a JSON payload with metadata:
+          type, speaker, sample_rate, timestamp, and base64-encoded float32 audio.
         """
         if not self._running or self._loop is None:
+            self._inc_metric("dropped_not_running")
             log.warning("WebSocketClient not running — dropping audio chunk")
             return
 
-        audio_bytes = audio.astype(np.float32).tobytes()
+        if self._loop.is_closed():
+            self._inc_metric("dropped_loop_unavailable")
+            log.warning("WebSocket event loop is closed — dropping audio chunk")
+            return
 
-        # asyncio.run_coroutine_threadsafe bridges sync → async safely
-        asyncio.run_coroutine_threadsafe(
-            self._send_queue.put(audio_bytes),
-            self._loop,
-        )
+        payload = UtteranceMessage.from_audio(
+            audio=audio,
+            speaker=speaker,
+            sample_rate=sample_rate,
+            ts_ms=int(time.time() * 1000),
+        ).to_json()
+
+        try:
+            self._loop.call_soon_threadsafe(self._enqueue_payload, payload)
+        except RuntimeError:
+            # Race: loop can close between the is_closed() check and call_soon_threadsafe().
+            self._inc_metric("dropped_loop_unavailable")
+            log.warning("WebSocket event loop unavailable during enqueue — dropping audio chunk")
 
     def start(self) -> None:
         """Start the background asyncio thread and open the WebSocket connection."""
@@ -130,10 +158,13 @@ class WebSocketClient:
         """Signal the background thread to shut down and wait for it."""
         self._running = False
         if self._loop:
-            self._loop.call_soon_threadsafe(self._loop.stop)
+            try:
+                self._loop.call_soon_threadsafe(self._loop.stop)
+            except RuntimeError:
+                pass
         if self._thread:
             self._thread.join(timeout=5.0)
-        log.info("WebSocketClient stopped.")
+        log.info("WebSocketClient stopped. Metrics=%s", self._snapshot_metrics())
 
     # ── Async internals ────────────────────────────────────────────────────────
     def _run_event_loop(self) -> None:
@@ -143,7 +174,7 @@ class WebSocketClient:
         and runs the main connection coroutine inside it.
         """
         self._loop       = asyncio.new_event_loop()
-        self._send_queue = asyncio.Queue()
+        self._send_queue = asyncio.Queue(maxsize=self._send_queue_maxsize)
         asyncio.set_event_loop(self._loop)
 
         try:
@@ -152,6 +183,9 @@ class WebSocketClient:
             log.error(f"WebSocket event loop crashed: {e}", exc_info=True)
         finally:
             self._loop.close()
+            self._loop = None
+            self._ws = None
+            self._send_queue = None
 
     async def _connect_with_retry(self) -> None:
         """
@@ -183,6 +217,7 @@ class WebSocketClient:
 
         if retries >= MAX_RETRIES:
             log.error(f"Giving up after {MAX_RETRIES} failed connection attempts.")
+            self._running = False
 
     async def _session(self, ws) -> None:
         """
@@ -210,14 +245,17 @@ class WebSocketClient:
         """
         while self._running:
             try:
-                audio_bytes = await asyncio.wait_for(
+                message = await asyncio.wait_for(
                     self._send_queue.get(),
                     timeout=1.0,
                 )
-                await ws.send(audio_bytes)
-                log.info(f"Sent {len(audio_bytes)} bytes to server")
+                await ws.send(message)
+                self._inc_metric("sent")
             except asyncio.TimeoutError:
                 continue    # No audio in queue — loop back and wait
+            except Exception:
+                self._inc_metric("send_failures")
+                raise
 
     async def _receiver(self, ws) -> None:
         """
@@ -226,9 +264,64 @@ class WebSocketClient:
         """
         async for message in ws:
             try:
-                data = json.loads(message)
-                log.info(f"Received: type={data.get('type')} | "
-                         f"transcript='{data.get('transcript', '')[:50]}...'")
+                event = InferenceMessage.from_json(message)
+                data = {
+                    "transcript": event.transcript,
+                    "type": event.intent,
+                    "intent": event.intent,
+                    "speaker": event.speaker,
+                    "suggestion": event.suggestion,
+                    "reasoning_short": event.reasoning_short,
+                    "confidence": event.confidence,
+                    "latency_ms": event.latency_ms,
+                }
+                log.info(
+                    "Received inference: speaker=%s intent=%s latency_ms=%.1f transcript='%s...'",
+                    event.speaker,
+                    event.intent,
+                    event.latency_ms,
+                    event.transcript[:50],
+                )
+                self._inc_metric("received")
                 self.on_response(data)
-            except json.JSONDecodeError as e:
+            except Exception as e:
                 log.warning(f"Could not parse server message: {e}")
+
+    # ── Queue internals and metrics ────────────────────────────────────────────
+    def _enqueue_payload(self, payload: str) -> None:
+        """
+        Enqueue payload from the event loop thread.
+
+        Drop policy when full:
+          - Drop the oldest queued item and enqueue the newest item.
+        This favors fresh realtime context over stale utterances.
+        """
+        if self._send_queue is None:
+            self._inc_metric("dropped_loop_unavailable")
+            return
+
+        try:
+            self._send_queue.put_nowait(payload)
+            self._inc_metric("enqueued")
+            return
+        except asyncio.QueueFull:
+            self._inc_metric("dropped_queue_full")
+
+        try:
+            self._send_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            pass
+
+        try:
+            self._send_queue.put_nowait(payload)
+            self._inc_metric("enqueued")
+        except asyncio.QueueFull:
+            self._inc_metric("dropped_queue_full")
+
+    def _inc_metric(self, key: str, value: int = 1) -> None:
+        with self._metrics_lock:
+            self._metrics[key] = self._metrics.get(key, 0) + value
+
+    def _snapshot_metrics(self) -> dict:
+        with self._metrics_lock:
+            return dict(self._metrics)

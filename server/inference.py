@@ -27,8 +27,7 @@ Classification types:
 import json
 import logging
 import os
-
-import yaml
+from typing import Optional
 from dotenv import load_dotenv
 from llama_cpp import Llama
 
@@ -44,8 +43,9 @@ class SuggestionEngine:
 
     The engine:
       1. Classifies the utterance (objection / question / buying_signal / none)
-      2. If actionable, generates a suggested response aligned with the sales playbook
-      3. Returns a structured dict the API can send directly back to the Mac client
+      2. Uses recent conversation turns as context
+      3. If actionable, generates a suggested response aligned with the sales playbook
+      4. Returns a structured dict the API can send directly back to the Mac client
 
     Usage:
         engine = SuggestionEngine()
@@ -76,24 +76,27 @@ class SuggestionEngine:
 
         log.info("LLM loaded.")
 
-    def analyse(self, transcript: str) -> dict:
+    def analyse(self, transcript: str, conversation_turns: Optional[list[dict]] = None) -> dict:
         """
         Classify and respond to a customer utterance.
 
         Args:
             transcript: Text of what the customer just said.
+            conversation_turns: Recent dialogue turns (speaker + transcript).
 
         Returns:
             dict with keys:
               "type"       — one of: objection | question | buying_signal | none
               "suggestion" — suggested response string (empty string if type is "none")
+              "reasoning_short" — one-sentence rationale for the recommendation
+              "confidence" — model confidence estimate in [0.0, 1.0] when available
 
         The LLM is prompted to respond in JSON so we can parse it reliably.
         If the response can't be parsed, we fall back to a safe default.
         """
         messages = [
             {"role": "system",    "content": self._system_prompt},
-            {"role": "user",      "content": build_user_prompt(transcript)},
+            {"role": "user",      "content": build_user_prompt(transcript, conversation_turns)},
         ]
 
         log.info(f"Running inference on: '{transcript}'")
@@ -129,10 +132,21 @@ class SuggestionEngine:
                 raise ValueError("No JSON object found in response")
 
             parsed = json.loads(raw_text[start:])
+            suggestion_type = parsed.get("type", "none")
+            if suggestion_type not in {"objection", "question", "buying_signal", "none"}:
+                suggestion_type = "none"
+
+            confidence = float(parsed.get("confidence", 0.0) or 0.0)
+            confidence = max(0.0, min(1.0, confidence))
+            reasoning_short = str(parsed.get("reasoning_short", "") or "").strip()
+            if len(reasoning_short) > 140:
+                reasoning_short = reasoning_short[:140].rstrip()
 
             return {
-                "type":       parsed.get("type",       "none"),
+                "type":       suggestion_type,
                 "suggestion": parsed.get("suggestion", ""),
+                "reasoning_short": reasoning_short,
+                "confidence": confidence,
             }
 
         except (json.JSONDecodeError, ValueError) as e:
@@ -140,4 +154,6 @@ class SuggestionEngine:
             return {
                 "type":       "none",
                 "suggestion": "",
+                "reasoning_short": "",
+                "confidence": 0.0,
             }

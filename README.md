@@ -1,5 +1,7 @@
 # Sales Copilot
 
+[![Tests](https://github.com/YOUR_GH_USERNAME/sales-copilot/actions/workflows/tests.yml/badge.svg)](https://github.com/YOUR_GH_USERNAME/sales-copilot/actions/workflows/tests.yml)
+
 A real-time AI sales assistant that transcribes live sales calls and surfaces suggested responses whenever a customer raises an objection or question — powered by self-hosted Whisper and Mistral 7B on a cloud GPU.
 
 ## Architecture
