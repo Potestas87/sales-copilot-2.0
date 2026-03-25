@@ -26,7 +26,11 @@ RUN pip3 install --upgrade pip
 # Install llama-cpp-python from the pre-built CUDA 12.4 wheel index.
 # This is the newest official pre-built wheel. Combined with the CUDA 12.8
 # runtime base image, this gives us GPU acceleration on RTX 5090.
-RUN pip3 install --no-cache-dir \
+#
+# --only-binary=:all: prevents pip from falling back to source compilation,
+# which can OOM on lower-memory build machines. If a wheel isn't available,
+# the build fails fast with a clear error instead of compiling.
+RUN pip3 install --no-cache-dir --only-binary=:all: \
     llama-cpp-python \
     --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
 
