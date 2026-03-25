@@ -1,90 +1,83 @@
 """
 display.py
 ----------
-On-screen suggestion display — shows AI-generated responses during live calls.
+On-screen suggestion display for live calls.
 
-Renders an always-on-top window that the salesperson can glance at while
-talking. Updates in real-time as the server sends back suggestions.
-
-Design goals:
-  - Unobtrusive: small, positioned out of the way, semi-transparent
-  - Scannable: colour-coded by type so you know what you're looking at
-  - Non-blocking: UI runs on its own thread, never freezes the main app
-
-Colour coding:
-  Red    — objection    (needs a rebuttal)
-  Blue   — question     (needs an answer)
-  Green  — buying signal (keep momentum)
-  Grey   — transcript only (no action needed)
+Shows:
+  - Current actionable suggestion (customer turns only)
+  - Confidence, latency, and short rationale
+  - Most recent customer transcript line
+  - Most recent salesperson transcript line
 """
 
+import os
 import queue
 import threading
+import time
 import tkinter as tk
 from typing import Optional
 
-# Colour scheme for each suggestion type
+# Color scheme for each suggestion type
 TYPE_COLOURS = {
-    "objection":     {"bg": "#ff4444", "fg": "white",  "label": "OBJECTION"},
-    "question":      {"bg": "#2196F3", "fg": "white",  "label": "QUESTION"},
-    "buying_signal": {"bg": "#4CAF50", "fg": "white",  "label": "BUYING SIGNAL"},
-    "none":          {"bg": "#424242", "fg": "#aaaaaa", "label": "TRANSCRIPT"},
+    "objection": {"bg": "#ff4444", "fg": "white", "label": "ACTION NOW: OBJECTION"},
+    "question": {"bg": "#2196F3", "fg": "white", "label": "ACTION NOW: QUESTION"},
+    "buying_signal": {"bg": "#4CAF50", "fg": "white", "label": "ACTION NOW: BUYING SIGNAL"},
+    "none": {"bg": "#424242", "fg": "#aaaaaa", "label": "LISTENING"},
 }
 
-WINDOW_WIDTH  = 480
-WINDOW_HEIGHT = 200
-WINDOW_X      = 20     # Distance from right edge of screen
-WINDOW_Y      = 20     # Distance from top of screen
+WINDOW_WIDTH = 520
+WINDOW_HEIGHT = 320
+WINDOW_X = 20
+WINDOW_Y = 20
+STALE_SUGGESTION_SECONDS = float(os.getenv("STALE_SUGGESTION_SECONDS", 12))
+LATENCY_GOOD_MS = float(os.getenv("LATENCY_GOOD_MS", 1500))
+LATENCY_WARN_MS = float(os.getenv("LATENCY_WARN_MS", 2500))
 
 
 class SuggestionDisplay:
-    """
-    Tkinter-based always-on-top window that shows the latest suggestion.
-
-    Tkinter must run on the main thread (macOS restriction), so this class
-    manages its own internal update queue — other threads post updates via
-    show(), and the tkinter mainloop drains them safely.
-
-    Usage:
-        display = SuggestionDisplay()
-        display.start()                 # Blocks — call from main thread
-
-        # From any other thread:
-        display.show("suggestion text", "objection")
-        display.stop()
-    """
+    """Tkinter always-on-top window that shows turn-aware transcript and guidance."""
 
     def __init__(self):
         self._update_queue: queue.Queue = queue.Queue()
-        self._root: Optional[tk.Tk]     = None
+        self._root: Optional[tk.Tk] = None
         self._running = False
 
-    def show(self, suggestion: str, suggestion_type: str, transcript: str = "") -> None:
-        """
-        Queue a display update. Thread-safe — call from any thread.
+        self._latest_customer_text = ""
+        self._latest_sales_text = ""
+        self._current_suggestion = ""
+        self._current_suggestion_type = "none"
+        self._current_confidence = 0.0
+        self._current_latency_ms = 0.0
+        self._current_reasoning_short = ""
+        self._last_actionable_ts = 0.0
 
-        Args:
-            suggestion:      The suggested response text (empty string for type "none")
-            suggestion_type: One of: objection | question | buying_signal | none
-            transcript:      The raw customer transcript (always shown)
-        """
-        self._update_queue.put({
-            "suggestion": suggestion,
-            "type":       suggestion_type,
-            "transcript": transcript,
-        })
+    def show(
+        self,
+        suggestion: str,
+        suggestion_type: str,
+        transcript: str = "",
+        speaker: str = "customer",
+        confidence: float = 0.0,
+        latency_ms: float = 0.0,
+        reasoning_short: str = "",
+    ) -> None:
+        """Queue a display update. Thread-safe and non-blocking."""
+        self._update_queue.put(
+            {
+                "suggestion": suggestion,
+                "type": suggestion_type,
+                "transcript": transcript,
+                "speaker": speaker,
+                "confidence": confidence,
+                "latency_ms": latency_ms,
+                "reasoning_short": reasoning_short,
+            }
+        )
 
     def start(self) -> None:
-        """
-        Build and start the tkinter window. Blocks until stop() is called.
-        Must be called from the main thread on macOS.
-        """
+        """Build and start the tkinter window. Blocks until stop() is called."""
         self._running = True
         self._build_window()
-
-        # Poll the update queue every 100ms using tkinter's after() scheduler.
-        # This is the standard safe pattern for updating tkinter from other threads —
-        # we never call tkinter methods directly from background threads.
         self._root.after(100, self._poll_updates)
         self._root.mainloop()
 
@@ -94,65 +87,75 @@ class SuggestionDisplay:
         if self._root:
             self._root.quit()
 
-    # ── Window construction ────────────────────────────────────────────────────
     def _build_window(self) -> None:
-        """Create and configure the tkinter window."""
         self._root = tk.Tk()
         self._root.title("Sales Copilot")
         self._root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}+{WINDOW_X}+{WINDOW_Y}")
-
-        # Always on top — stays visible even when the call app is in focus
         self._root.attributes("-topmost", True)
-
-        # Semi-transparent background
-        self._root.attributes("-alpha", 0.92)
+        self._root.attributes("-alpha", 0.94)
         self._root.configure(bg="#1e1e1e")
 
-        # ── Type badge (OBJECTION / QUESTION / etc.) ───────────────────────────
         self._badge = tk.Label(
             self._root,
-            text       = "LISTENING...",
-            font       = ("Helvetica Neue", 10, "bold"),
-            bg         = "#424242",
-            fg         = "white",
-            padx       = 8,
-            pady       = 4,
-            anchor     = "w",
+            text="LISTENING",
+            font=("Helvetica Neue", 10, "bold"),
+            bg="#424242",
+            fg="white",
+            padx=8,
+            pady=4,
+            anchor="w",
         )
         self._badge.pack(fill="x", padx=10, pady=(10, 4))
 
-        # ── Suggestion text ────────────────────────────────────────────────────
         self._suggestion_label = tk.Label(
             self._root,
-            text       = "Waiting for customer speech...",
-            font       = ("Helvetica Neue", 13),
-            bg         = "#1e1e1e",
-            fg         = "#ffffff",
-            wraplength = WINDOW_WIDTH - 24,
-            justify    = "left",
-            anchor     = "nw",
+            text="Waiting for customer speech...",
+            font=("Helvetica Neue", 13),
+            bg="#1e1e1e",
+            fg="#ffffff",
+            wraplength=WINDOW_WIDTH - 24,
+            justify="left",
+            anchor="nw",
         )
-        self._suggestion_label.pack(fill="both", expand=True, padx=12, pady=4)
+        self._suggestion_label.pack(fill="x", padx=12, pady=(2, 4))
 
-        # ── Transcript (smaller, dimmer) ───────────────────────────────────────
-        self._transcript_label = tk.Label(
+        self._meta_label = tk.Label(
             self._root,
-            text       = "",
-            font       = ("Helvetica Neue", 10),
-            bg         = "#1e1e1e",
-            fg         = "#777777",
-            wraplength = WINDOW_WIDTH - 24,
-            justify    = "left",
-            anchor     = "nw",
+            text="",
+            font=("Helvetica Neue", 10),
+            bg="#1e1e1e",
+            fg="#9e9e9e",
+            wraplength=WINDOW_WIDTH - 24,
+            justify="left",
+            anchor="nw",
         )
-        self._transcript_label.pack(fill="x", padx=12, pady=(0, 10))
+        self._meta_label.pack(fill="x", padx=12, pady=(0, 4))
 
-    # ── Update loop ────────────────────────────────────────────────────────────
+        self._customer_label = tk.Label(
+            self._root,
+            text="Customer: (waiting)",
+            font=("Helvetica Neue", 10),
+            bg="#1e1e1e",
+            fg="#d0d0d0",
+            wraplength=WINDOW_WIDTH - 24,
+            justify="left",
+            anchor="nw",
+        )
+        self._customer_label.pack(fill="x", padx=12, pady=(4, 2))
+
+        self._sales_label = tk.Label(
+            self._root,
+            text="You: (waiting)",
+            font=("Helvetica Neue", 10),
+            bg="#1e1e1e",
+            fg="#9a9a9a",
+            wraplength=WINDOW_WIDTH - 24,
+            justify="left",
+            anchor="nw",
+        )
+        self._sales_label.pack(fill="x", padx=12, pady=(0, 10))
+
     def _poll_updates(self) -> None:
-        """
-        Drain the update queue and refresh the UI.
-        Called by tkinter's event loop every 100ms via after().
-        """
         try:
             while True:
                 update = self._update_queue.get_nowait()
@@ -160,66 +163,146 @@ class SuggestionDisplay:
         except queue.Empty:
             pass
 
+        self._expire_stale_suggestion()
+
         if self._running:
             self._root.after(100, self._poll_updates)
 
     def _apply_update(self, update: dict) -> None:
-        """Apply a queued update to the tkinter widgets."""
         suggestion_type = update.get("type", "none")
-        suggestion      = update.get("suggestion", "")
-        transcript      = update.get("transcript", "")
+        suggestion = update.get("suggestion", "")
+        transcript = update.get("transcript", "")
+        speaker = update.get("speaker", "customer")
+        confidence = float(update.get("confidence", 0.0) or 0.0)
+        confidence = max(0.0, min(1.0, confidence))
+        latency_ms = float(update.get("latency_ms", 0.0) or 0.0)
+        latency_ms = max(0.0, latency_ms)
+        reasoning_short = str(update.get("reasoning_short", "") or "").strip()
 
-        colours = TYPE_COLOURS.get(suggestion_type, TYPE_COLOURS["none"])
+        if transcript:
+            clipped = self._clip_text(transcript, 110)
+            if speaker == "customer":
+                self._latest_customer_text = clipped
+            elif speaker == "salesperson":
+                self._latest_sales_text = clipped
 
-        # Update badge
-        self._badge.config(
-            text = colours["label"],
-            bg   = colours["bg"],
-            fg   = colours["fg"],
-        )
+        # Only customer turns can refresh actionable suggestions.
+        if speaker == "customer":
+            if suggestion and suggestion_type != "none":
+                self._current_suggestion = suggestion
+                self._current_suggestion_type = suggestion_type
+                self._current_confidence = confidence
+                self._current_latency_ms = latency_ms
+                self._current_reasoning_short = self._clip_text(reasoning_short, 140)
+                self._last_actionable_ts = time.monotonic()
+            else:
+                self._clear_actionable()
 
-        # Update suggestion text
-        if suggestion:
-            self._suggestion_label.config(text=suggestion, fg="#ffffff")
+        self._render()
+
+    def _expire_stale_suggestion(self) -> None:
+        if self._current_suggestion_type == "none":
+            return
+        age = time.monotonic() - self._last_actionable_ts
+        if age > STALE_SUGGESTION_SECONDS:
+            self._clear_actionable()
+            self._render()
+
+    def _clear_actionable(self) -> None:
+        self._current_suggestion = ""
+        self._current_suggestion_type = "none"
+        self._current_confidence = 0.0
+        self._current_latency_ms = 0.0
+        self._current_reasoning_short = ""
+
+    def _render(self) -> None:
+        colours = TYPE_COLOURS.get(self._current_suggestion_type, TYPE_COLOURS["none"])
+        self._badge.config(text=colours["label"], bg=colours["bg"], fg=colours["fg"])
+
+        if self._current_suggestion:
+            self._suggestion_label.config(
+                text=self._clip_text(self._current_suggestion, 220),
+                fg="#ffffff",
+            )
+            confidence_pct = int(round(self._current_confidence * 100))
+            latency_label, latency_color = self._latency_visual(self._current_latency_ms)
+            meta = f"Confidence: {confidence_pct}% | Latency: {self._current_latency_ms:.0f}ms ({latency_label})"
+            if self._current_reasoning_short:
+                meta = f"{meta} | {self._current_reasoning_short}"
+            self._meta_label.config(text=meta, fg=latency_color)
         else:
             self._suggestion_label.config(
-                text = "No action needed — continue listening",
-                fg   = "#555555",
+                text="No customer action needed right now.",
+                fg="#666666",
             )
+            self._meta_label.config(text="Listening for next customer turn...", fg="#707070")
 
-        # Update transcript
-        if transcript:
-            # Truncate long transcripts to keep the window tidy
-            display_transcript = transcript if len(transcript) <= 80 else transcript[:77] + "..."
-            self._transcript_label.config(text=f'"{display_transcript}"')
+        customer_text = self._latest_customer_text or "(waiting)"
+        sales_text = self._latest_sales_text or "(waiting)"
+        self._customer_label.config(text=f"Customer: {customer_text}")
+        self._sales_label.config(text=f"You: {sales_text}")
+
+    @staticmethod
+    def _clip_text(text: str, max_len: int) -> str:
+        if len(text) <= max_len:
+            return text
+        return text[: max_len - 3].rstrip() + "..."
+
+    @staticmethod
+    def _latency_visual(latency_ms: float) -> tuple[str, str]:
+        if latency_ms <= LATENCY_GOOD_MS:
+            return "good", "#7bc67b"
+        if latency_ms <= LATENCY_WARN_MS:
+            return "watch", "#e6c266"
+        return "slow", "#e57373"
 
 
-# ── Standalone preview ─────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    """
-    Preview the display UI with dummy data — no server or audio needed.
-    Cycles through all suggestion types every 3 seconds.
-
-    Usage:
-        python3 client/display.py
-    """
-    import time
-
-    display  = SuggestionDisplay()
+    display = SuggestionDisplay()
     examples = [
-        ("objection",     "That's a fair concern. Most customers feel that way initially — let me walk you through the ROI breakdown.",          "I'm not sure I can justify the cost right now."),
-        ("question",      "Great question. The onboarding takes about two weeks and includes a dedicated manager the whole way through.",          "How long does it take to get set up?"),
-        ("buying_signal", "Absolutely — we can have you live within the month. Want to pencil in a kickoff call for next week?",                   "This actually sounds like something we could really use."),
-        ("none",          "",                                                                                                                      "We've been using our current setup for about three years."),
+        {
+            "speaker": "customer",
+            "type": "objection",
+            "transcript": "I am not sure we can justify the cost right now.",
+            "suggestion": "Totally fair. Teams like yours usually justify this via reduced churn in under one quarter.",
+            "reasoning_short": "Pricing concern detected; ROI framing is most relevant.",
+            "confidence": 0.86,
+            "latency_ms": 1240.0,
+        },
+        {
+            "speaker": "salesperson",
+            "type": "none",
+            "transcript": "Would it help if I showed a 90-day ROI model?",
+            "suggestion": "",
+            "reasoning_short": "",
+            "confidence": 0.0,
+            "latency_ms": 980.0,
+        },
+        {
+            "speaker": "customer",
+            "type": "question",
+            "transcript": "How long does onboarding usually take?",
+            "suggestion": "Great question. Typical onboarding is two weeks with a dedicated implementation lead.",
+            "reasoning_short": "Direct onboarding question; answer with timeline and support model.",
+            "confidence": 0.91,
+            "latency_ms": 1105.0,
+        },
     ]
 
     def cycle_examples():
-        for stype, suggestion, transcript in examples:
-            display.show(suggestion, stype, transcript)
+        for event in examples:
+            display.show(
+                suggestion=event["suggestion"],
+                suggestion_type=event["type"],
+                transcript=event["transcript"],
+                speaker=event["speaker"],
+                confidence=event["confidence"],
+                latency_ms=event["latency_ms"],
+                reasoning_short=event["reasoning_short"],
+            )
             time.sleep(3)
         display.stop()
 
     t = threading.Thread(target=cycle_examples, daemon=True)
     t.start()
-
     display.start()

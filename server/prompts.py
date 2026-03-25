@@ -12,6 +12,7 @@ Keeping prompts in their own module means:
 import os
 import yaml
 import logging
+from typing import Optional
 
 log = logging.getLogger("prompts")
 
@@ -83,22 +84,49 @@ Your task:
 
 2. If the type is objection, question, or buying_signal — write a short, natural suggested
    response the salesperson can use. Keep it under 3 sentences. Don't be robotic.
+   Use the conversation context to avoid repeating what the salesperson already said.
+   Add incremental value (new framing, evidence, or a concise next-step question).
 
 3. If the type is "none" — return an empty suggestion string.
 
+4. Provide a short reason for the recommendation in one sentence (<= 140 chars)
+   in a field called "reasoning_short".
+
+5. Provide confidence in your classification and recommendation in a field called
+   "confidence" as a float between 0.0 and 1.0.
+
 IMPORTANT: Always respond in valid JSON using exactly this format:
-{{"type": "<type>", "suggestion": "<suggestion text or empty string>"}}
+{{"type": "<type>", "suggestion": "<suggestion text or empty string>", "reasoning_short": "<brief rationale>", "confidence": <0.0-1.0>}}
 
 Do not include any text outside the JSON object. Do not add explanation or commentary."""
 
     return system_prompt
 
 
-def build_user_prompt(transcript: str) -> str:
+def build_user_prompt(transcript: str, conversation_turns: Optional[list[dict]] = None) -> str:
     """
     Build the per-utterance user prompt sent alongside each transcription.
 
-    Kept simple intentionally — the system prompt carries all the context.
-    The user prompt just delivers the raw customer speech.
+    Includes recent conversation turns so the model can respond with context.
     """
-    return f'Customer just said: "{transcript}"\n\nRespond with JSON only.'
+    turns = conversation_turns or []
+
+    conversation_block = "No prior conversation context."
+    if turns:
+        formatted = []
+        for turn in turns:
+            speaker = turn.get("speaker", "unknown")
+            text = (turn.get("transcript", "") or "").strip()
+            if not text:
+                continue
+            formatted.append(f"{speaker}: {text}")
+        if formatted:
+            conversation_block = "\n".join(formatted)
+
+    return (
+        "Conversation so far (most recent turns):\n"
+        f"{conversation_block}\n\n"
+        f'Latest customer utterance: "{transcript}"\n\n'
+        "Do not repeat prior salesperson statements; build on them.\n"
+        "Respond with JSON only."
+    )

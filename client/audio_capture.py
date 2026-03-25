@@ -1,15 +1,15 @@
 """
 audio_capture.py
 ----------------
-Captures audio from two sources simultaneously:
-  1. Your microphone (your own voice)
-  2. BlackHole virtual device (customer's voice from the call app)
+Captures audio from two sources simultaneously and keeps them separate:
+  1. Your microphone (salesperson stream)
+  2. BlackHole virtual device (customer stream from the call app)
 
-Only the customer's audio is sent downstream for transcription and
-objection detection — we don't need to analyse what the salesperson says.
+Audio chunks are placed into dedicated queues consumed downstream:
+  - customer_audio_queue
+  - sales_audio_queue
 
-Audio chunks are placed into a Queue that the VAD module reads from.
-This keeps the capture layer decoupled from everything else.
+For backward compatibility, audio_queue aliases customer_audio_queue.
 
 Run this file directly to list your audio devices and find the right indexes:
     python client/audio_capture.py
@@ -137,20 +137,19 @@ class AudioCapture:
     """
     Opens two simultaneous audio input streams:
 
-      mic_stream  — your microphone
-                    Captured but not forwarded downstream (we only want to
-                    analyse the customer, not the salesperson).
+      mic_stream  — your microphone (salesperson stream)
+                    Each chunk is placed into self.sales_audio_queue.
 
       call_stream — BlackHole 2ch virtual device
                     The customer's voice coming through your call app.
-                    Each chunk is placed into self.audio_queue for the
-                    VAD module to consume.
+                    Each chunk is placed into self.customer_audio_queue.
 
     Usage:
         capture = AudioCapture()
         capture.start()
-        # audio_queue now receives 0.5-second float32 numpy chunks
-        chunk = capture.audio_queue.get()
+        # customer and salesperson chunks are available separately:
+        customer_chunk = capture.customer_audio_queue.get()
+        sales_chunk = capture.sales_audio_queue.get()
         capture.stop()
     """
 
@@ -159,6 +158,7 @@ class AudioCapture:
         mic_device_index: Optional[int] = None,
         call_device_index: Optional[int] = None,
         on_customer_audio: Optional[Callable[[np.ndarray], None]] = None,
+        on_sales_audio: Optional[Callable[[np.ndarray], None]] = None,
     ):
         """
         Args:
@@ -169,6 +169,8 @@ class AudioCapture:
             on_customer_audio:   Optional callback called with each audio
                                  chunk in addition to the queue. Useful for
                                  debugging or visualising the waveform.
+            on_sales_audio:      Optional callback called with each salesperson
+                                 chunk in addition to the queue.
         """
         if mic_device_index is not None:
             self.mic_device_index = mic_device_index
@@ -180,9 +182,13 @@ class AudioCapture:
         else:
             self.call_device_index = resolve_device("CALL_DEVICE_NAME", "CALL_AUDIO_DEVICE_INDEX", "input")
         self.on_customer_audio = on_customer_audio
+        self.on_sales_audio = on_sales_audio
 
-        # Thread-safe queue consumed by the VAD module
-        self.audio_queue: queue.Queue = queue.Queue()
+        # Thread-safe queues consumed by downstream VAD modules
+        self.customer_audio_queue: queue.Queue = queue.Queue()
+        self.sales_audio_queue: queue.Queue = queue.Queue()
+        # Backward compatibility: existing code expects audio_queue (customer stream)
+        self.audio_queue = self.customer_audio_queue
 
         self._running = False
         self._streams = []
@@ -193,10 +199,13 @@ class AudioCapture:
     # processing here, just capture and hand off.
 
     def _mic_callback(self, indata, frames, time_info, status) -> None:
-        """Mic audio arrives here. We log errors but don't forward the data."""
+        """Salesperson mic audio arrives here and is routed to sales_audio_queue."""
         if status:
             print(f"[AudioCapture][MIC] Warning: {status}")
-        # Mic audio is not forwarded — we only analyse customer speech
+        audio_chunk = self._to_mono(indata)
+        self.sales_audio_queue.put(audio_chunk)
+        if self.on_sales_audio:
+            self.on_sales_audio(audio_chunk)
 
     def _to_mono(self, indata: np.ndarray) -> np.ndarray:
         """
@@ -213,13 +222,13 @@ class AudioCapture:
         """
         Customer audio arrives here every CHUNK_SECONDS.
         We convert whatever channel format the device uses down to mono,
-        then put the chunk in the queue for the VAD module.
+        then put the chunk in the customer queue for the VAD module.
         """
         if status:
             print(f"[AudioCapture][CALL] Warning: {status}")
 
         audio_chunk = self._to_mono(indata)
-        self.audio_queue.put(audio_chunk)
+        self.customer_audio_queue.put(audio_chunk)
 
         if self.on_customer_audio:
             self.on_customer_audio(audio_chunk)
@@ -316,8 +325,14 @@ if __name__ == "__main__":
         pass
     finally:
         capture.stop()
-        chunk_count = capture.audio_queue.qsize()
-        print(f"\nTest complete. Captured {chunk_count} chunks "
-              f"({chunk_count * CHUNK_SECONDS:.1f}s of audio)")
-        if chunk_count == 0:
-            print("No audio captured — check your CALL_AUDIO_DEVICE_INDEX in .env")
+        customer_count = capture.customer_audio_queue.qsize()
+        sales_count = capture.sales_audio_queue.qsize()
+        print(
+            f"\nTest complete.\n"
+            f"  Customer chunks:   {customer_count} ({customer_count * CHUNK_SECONDS:.1f}s)\n"
+            f"  Salesperson chunks:{sales_count} ({sales_count * CHUNK_SECONDS:.1f}s)"
+        )
+        if customer_count == 0:
+            print("No customer audio captured — check your CALL_AUDIO_DEVICE_INDEX in .env")
+        if sales_count == 0:
+            print("No mic audio captured — check your MIC_DEVICE_INDEX in .env")

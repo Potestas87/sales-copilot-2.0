@@ -14,3 +14,6 @@ numpy>=1.24.0              # Audio arrays passed between transcription and infer
 pyyaml>=6.0.0              # Loads the sales playbook YAML config
 python-dotenv>=1.0.0       # Loads .env into os.environ
 packaging>=23.0            # Required by faster-whisper and other dependencies
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest>=8.0.0              # Test runner for unit/integration checks
