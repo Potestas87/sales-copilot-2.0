@@ -76,7 +76,8 @@ class WebSocketClient:
         self.host        = host or os.getenv("SERVER_HOST", "localhost")
         self.port        = int(port or os.getenv("SERVER_PORT", 8000))
         self.on_response = on_response
-        self._uri        = f"ws://{self.host}:{self.port}/ws"
+        # SERVER_URL overrides the constructed URI (needed for RunPod proxy / WSS)
+        self._uri        = os.getenv("SERVER_URL") or f"ws://{self.host}:{self.port}/ws"
 
         # asyncio infrastructure
         self._loop:   Optional[asyncio.AbstractEventLoop] = None

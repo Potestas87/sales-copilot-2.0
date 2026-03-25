@@ -1,11 +1,17 @@
-# ── Single stage: Runtime + pre-built llama-cpp-python wheel ──────────────────
-# We use pre-built CUDA wheels for llama-cpp-python instead of compiling from
-# source. This is faster (no 10-min compile), more reliable, and keeps the
-# Dockerfile simple. The wheel is compiled by the llama-cpp-python project
-# against CUDA 12.1 and published at their GitHub releases index.
-FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
+# ── Single stage: CUDA 12.8 runtime + pre-built cu124 wheel ──────────────────
+# RTX 5090 (Blackwell) requires CUDA 12.8+ runtime. We pair the 12.8 runtime
+# base image with the cu124 pre-built llama-cpp-python wheel (the newest
+# official wheel available). CUDA 12.8 is backward-compatible with code
+# compiled against 12.4, and the cu124 wheel includes PTX that the driver
+# can JIT-compile for Blackwell's compute capability.
+FROM nvidia/cuda:12.8.0-cudnn-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
+
+# Tell the NVIDIA Container Runtime to pass through GPU drivers and CUDA libraries.
+# Without these, the container can't find libcuda.so.1 on cloud GPU providers like RunPod.
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 # System dependencies
 RUN apt-get update && apt-get install -y \
@@ -17,12 +23,12 @@ RUN apt-get update && apt-get install -y \
 # Upgrade pip
 RUN pip3 install --upgrade pip
 
-# Install llama-cpp-python from the pre-built CUDA 12.1 wheel index.
-# This avoids compiling from source entirely — the wheel already contains
-# the GPU kernels compiled against CUDA 12.1.
+# Install llama-cpp-python from the pre-built CUDA 12.4 wheel index.
+# This is the newest official pre-built wheel. Combined with the CUDA 12.8
+# runtime base image, this gives us GPU acceleration on RTX 5090.
 RUN pip3 install --no-cache-dir \
     llama-cpp-python \
-    --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121
+    --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
 
 # Install the remaining server dependencies
 COPY requirements-server.txt /tmp/requirements-server.txt
@@ -32,30 +38,25 @@ RUN pip3 install --no-cache-dir -r /tmp/requirements-server.txt
 WORKDIR /app
 
 # Copy server code and config
-# We copy these separately so that changing code doesn't invalidate
-# the (expensive) dependency layers above.
 COPY server/   ./server/
 COPY config/   ./config/
+COPY scripts/entrypoint.sh ./entrypoint.sh
 
-# Models are NOT baked into the image — they're mounted as a volume at runtime.
-# Baking them in would add ~8GB to the image and make it impractical to push/pull.
-# See docker-compose.yml for the volume mount configuration.
-RUN mkdir -p /app/models
+# Models are NOT baked into the image — they're downloaded at first startup
+# to the persistent volume (/workspace on RunPod). This keeps the image lean.
+RUN mkdir -p /app/models && chmod +x /app/entrypoint.sh
 
 # Expose the FastAPI port
 EXPOSE 8000
 
 # Health check — RunPod and any orchestrator can use this to verify readiness.
-# start-period=120s gives the server time to load models before health checks begin.
+# start-period=300s gives time to download the model (~4.5GB) on first boot.
 HEALTHCHECK \
     --interval=30s \
     --timeout=10s \
-    --start-period=120s \
+    --start-period=300s \
     --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Set working directory to server so relative imports work
-WORKDIR /app/server
-
-# Start the server
-CMD ["python3", "main.py"]
+# The entrypoint script downloads the model if missing, then starts the server.
+CMD ["/app/entrypoint.sh"]
