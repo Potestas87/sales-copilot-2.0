@@ -1,0 +1,63 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# Dockerfile.base — Heavy ML dependencies, compiled once and reused
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# This image contains everything that's slow to build and rarely changes:
+#   - CUDA 12.8 devel toolkit (nvcc, headers, cuBLAS)
+#   - llama-cpp-python compiled from source with GGML_CUDA=ON
+#   - faster-whisper and its CTranslate2 backend
+#   - FastAPI, uvicorn, and all server Python dependencies
+#
+# Rebuild this image ONLY when you:
+#   - Upgrade llama-cpp-python, faster-whisper, or CUDA versions
+#   - Add/remove packages in requirements-server.txt
+#
+# The app Dockerfile (docker/Dockerfile) inherits FROM this image and only
+# copies application code — making app builds take < 60 seconds.
+#
+# Build:
+#   docker build -t potestas87/sales-copilot-base:latest -f docker/Dockerfile.base .
+#
+# ══════════════════════════════════════════════════════════════════════════════
+
+FROM nvidia/cuda:12.8.0-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── NVIDIA Container Runtime ─────────────────────────────────────────────────
+# Expose GPUs and CUDA libraries inside the container on cloud GPU providers.
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+# ── System dependencies ──────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y \
+    python3.11 \
+    python3-pip \
+    curl \
+    cmake \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Python build toolchain ───────────────────────────────────────────────────
+# Pre-install these so llama-cpp-python doesn't try to compile them from
+# source (which fails due to a pip/pyproject_hooks bug on older pip).
+RUN pip3 install --upgrade pip setuptools wheel \
+    && pip3 install scikit-build-core hatchling pluggy setuptools-scm ninja
+
+# ── Compile llama-cpp-python with CUDA GPU support ───────────────────────────
+# This is the expensive step (~30-60 min on 2-core CI, ~5 min on a GPU pod).
+# LIBRARY_PATH includes the CUDA stub so the linker can find libcuda.so
+# during compilation. At runtime, the real driver is injected by NVIDIA.
+ENV CMAKE_ARGS="-DGGML_CUDA=ON"
+ENV CUDACXX=/usr/local/cuda/bin/nvcc
+ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LIBRARY_PATH}
+RUN pip3 install --no-cache-dir --no-binary=llama-cpp-python llama-cpp-python
+
+# ── Server Python dependencies ───────────────────────────────────────────────
+# Everything from requirements-server.txt EXCEPT llama-cpp-python (already
+# installed above with CUDA). This layer caches until requirements change.
+COPY requirements-server.txt /tmp/requirements-server.txt
+RUN pip3 install --no-cache-dir -r /tmp/requirements-server.txt
+
+# ── Base image metadata ──────────────────────────────────────────────────────
+LABEL maintainer="potestas87"
+LABEL description="Sales Copilot base image — CUDA 12.8 + llama-cpp-python (GPU) + faster-whisper"
