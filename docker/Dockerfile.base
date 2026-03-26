@@ -47,9 +47,13 @@ RUN pip3 install --upgrade pip setuptools wheel \
 # This is the expensive step (~30-60 min on 2-core CI, ~5 min on a GPU pod).
 # LIBRARY_PATH includes the CUDA stub so the linker can find libcuda.so
 # during compilation. At runtime, the real driver is injected by NVIDIA.
-ENV CMAKE_ARGS="-DGGML_CUDA=ON"
+ENV CMAKE_ARGS="-DGGML_CUDA=ON -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=OFF"
 ENV CUDACXX=/usr/local/cuda/bin/nvcc
 ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LIBRARY_PATH}
+# The stubs directory has libcuda.so but the linker looks for libcuda.so.1
+# (the soname). Create a symlink so the linker resolves it correctly.
+# At runtime the NVIDIA Container Runtime injects the real libcuda.so.1.
+RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1
 RUN pip3 install --no-cache-dir --no-binary=llama-cpp-python llama-cpp-python
 
 # ── Server Python dependencies ───────────────────────────────────────────────
