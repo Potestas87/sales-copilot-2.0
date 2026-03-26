@@ -52,8 +52,10 @@ def build_system_prompt() -> str:
     It tells the LLM:
       1. Its role (sales copilot, not a chatbot)
       2. What the product is and what makes it valuable
-      3. The tone to use in suggestions
-      4. How to format its output (always JSON)
+      3. How to handle specific objections (from playbook)
+      4. How to respond to buying signals (from playbook)
+      5. The tone to use in suggestions
+      6. How to format its output (always JSON)
     """
     playbook = load_playbook()
 
@@ -61,10 +63,29 @@ def build_system_prompt() -> str:
     product_desc  = playbook.get("product_description", "")
     value_props   = playbook.get("value_propositions", [])
     tone          = playbook.get("tone", "professional, confident, and empathetic")
+    objection_guidance  = playbook.get("objection_guidance", {})
+    buying_signal_guide = playbook.get("buying_signal_guidance", "")
 
     value_prop_text = ""
     if value_props:
         value_prop_text = "Key value propositions:\n" + "\n".join(f"  - {v}" for v in value_props)
+
+    # Build objection handling guidance from playbook
+    objection_text = ""
+    if objection_guidance:
+        entries = []
+        for key, info in objection_guidance.items():
+            summary = info.get("summary", key)
+            angle   = info.get("angle", "").strip()
+            entries.append(f'  "{summary}" — {angle}')
+        objection_text = (
+            "Objection handling playbook (use these angles when the customer raises these concerns):\n"
+            + "\n".join(entries)
+        )
+
+    buying_signal_text = ""
+    if buying_signal_guide:
+        buying_signal_text = f"Buying signal guidance:\n  {buying_signal_guide.strip()}"
 
     system_prompt = f"""You are a real-time sales copilot assistant. Your job is to analyse what a customer
 just said on a sales call and help the salesperson respond effectively.
@@ -73,21 +94,34 @@ Product: {product_name}
 {product_desc}
 {value_prop_text}
 
+{objection_text}
+
+{buying_signal_text}
+
 Tone: {tone}
 
 Your task:
 1. Classify what the customer said into one of these types:
-   - "objection"     : customer pushes back, expresses doubt, or raises a concern
-   - "question"      : customer asks for information or clarification
-   - "buying_signal" : customer expresses interest, asks about next steps, or shows intent to buy
-   - "none"          : general statement that doesn't require a specific sales response
+   - "objection"     : customer pushes back, expresses doubt, raises a concern, mentions price,
+                        says they're too busy, mentions a competitor, says it's complicated, or
+                        says they need to check with someone else. ANY hesitation or pushback counts.
+   - "question"      : customer asks for information, clarification, or wants to know more about
+                        anything — features, pricing, process, timelines, integrations, etc.
+   - "buying_signal" : customer expresses interest, asks about next steps, pricing details,
+                        implementation, trials, demos, or says things like "how do we get started",
+                        "what does onboarding look like", "can we try it", "who else uses this".
+   - "none"          : ONLY use this for pure small talk, greetings, or completely off-topic
+                        statements like "nice weather" or "hello". If in doubt, do NOT classify
+                        as "none" — pick the closest actionable type instead.
 
 2. If the type is objection, question, or buying_signal — write a short, natural suggested
    response the salesperson can use. Keep it under 3 sentences. Don't be robotic.
    Use the conversation context to avoid repeating what the salesperson already said.
    Add incremental value (new framing, evidence, or a concise next-step question).
+   Draw from the objection handling playbook and value propositions above.
 
-3. If the type is "none" — return an empty suggestion string.
+3. ONLY return "none" with an empty suggestion for pure small talk or greetings.
+   Almost everything a customer says on a sales call is actionable — classify it.
 
 4. Provide a short reason for the recommendation in one sentence (<= 140 chars)
    in a field called "reasoning_short".
