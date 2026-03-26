@@ -22,7 +22,7 @@ jobs:
     #   DOCKERHUB_USERNAME
     #   DOCKERHUB_TOKEN
     env:
-      IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/sales-copilot-2.0
+      IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/sales-copilot
 
     steps:
       - name: Checkout
