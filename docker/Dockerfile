@@ -43,6 +43,12 @@ RUN pip3 install --upgrade pip setuptools wheel \
 # offloads all model layers to GPU (n_gpu_layers=-1).
 ENV CMAKE_ARGS="-DGGML_CUDA=ON"
 ENV CUDACXX=/usr/local/cuda/bin/nvcc
+# The CUDA devel image ships a stub libcuda.so at /usr/local/cuda/lib64/stubs/
+# but the linker doesn't search there by default. Without this, the build
+# compiles fine but fails at link time with "libcuda.so.1 not found".
+# At runtime on the GPU host, the real libcuda.so.1 is injected by the
+# NVIDIA Container Runtime, so the stub is only needed during compilation.
+ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LIBRARY_PATH}
 RUN pip3 install --no-cache-dir --no-binary=llama-cpp-python llama-cpp-python
 
 # ── Install remaining server dependencies ────────────────────────────────────
