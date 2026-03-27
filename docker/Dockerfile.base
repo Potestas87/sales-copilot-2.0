@@ -50,12 +50,21 @@ RUN pip3 install --upgrade pip setuptools wheel \
 # ── Compile llama-cpp-python with CUDA GPU support ───────────────────────────
 # This is the expensive step (~30-60 min on 2-core CI, ~5 min on a GPU pod).
 #
-# cuda-compat-12-8 installs libcuda.so.1 to /usr/local/cuda-12.8/compat/.
-# We add that to LD_LIBRARY_PATH and LIBRARY_PATH so the linker can resolve
-# both direct and transitive libcuda dependencies during compilation.
+# The build challenge: llama.cpp's cmake tries to build CLI tools (mtmd-cli,
+# etc.) that link against libggml-cuda.so → libcuda.so.1. In a driverless
+# Docker build (no GPU), libcuda.so.1 doesn't exist, so the link fails.
+#
+# Solution (three-part):
+#   1. -DLLAMA_BUILD_TOOLS=OFF  → skip CLI executables we don't need
+#   2. --allow-shlib-undefined  → let shared libs defer libcuda symbols to runtime
+#   3. LIBRARY_PATH includes cuda stubs + compat dir for any remaining references
+#
+# At runtime on a GPU host, the NVIDIA Container Runtime injects the real
+# libcuda.so.1 driver, so all deferred symbols resolve correctly.
 ENV CUDACXX=/usr/local/cuda/bin/nvcc
-ENV CMAKE_ARGS="-DGGML_CUDA=ON"
-ENV LD_LIBRARY_PATH=/usr/local/cuda-12.8/compat:${LD_LIBRARY_PATH}
+ENV CMAKE_ARGS="-DGGML_CUDA=ON -DLLAMA_BUILD_TOOLS=OFF -DCMAKE_SHARED_LINKER_FLAGS=-Wl,--allow-shlib-undefined -DCMAKE_LIBRARY_PATH=/usr/local/cuda/lib64/stubs"
+ENV FORCE_CMAKE=1
+ENV LD_LIBRARY_PATH=/usr/local/cuda-12.8/compat:/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH}
 ENV LIBRARY_PATH=/usr/local/cuda-12.8/compat:/usr/local/cuda/lib64/stubs:${LIBRARY_PATH}
 RUN pip3 install --no-cache-dir --no-binary=llama-cpp-python llama-cpp-python
 
