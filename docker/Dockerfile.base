@@ -30,11 +30,15 @@ ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 # ── System dependencies ──────────────────────────────────────────────────────
+# cuda-compat-12-8 provides libcuda.so.1 for linking during Docker builds
+# where no real GPU driver is present. At runtime on GPU hosts, the NVIDIA
+# Container Runtime injects the real driver — this is only for compilation.
 RUN apt-get update && apt-get install -y \
     python3.11 \
     python3-pip \
     curl \
     cmake \
+    cuda-compat-12-8 \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Python build toolchain ───────────────────────────────────────────────────
@@ -46,21 +50,14 @@ RUN pip3 install --upgrade pip setuptools wheel \
 # ── Compile llama-cpp-python with CUDA GPU support ───────────────────────────
 # This is the expensive step (~30-60 min on 2-core CI, ~5 min on a GPU pod).
 #
-# The CUDA devel image has stub libraries at /usr/local/cuda/lib64/stubs/
-# but only libcuda.so (no .so.1 soname symlink). The linker needs both:
-#   1. A libcuda.so.1 symlink (for resolving the soname)
-#   2. Explicit -L flags for transitive deps (LIBRARY_PATH alone isn't enough
-#      because libcuda is an indirect dependency of libggml-cuda.so)
-#
-# At runtime on the GPU host, the real libcuda.so.1 is injected by the
-# NVIDIA Container Runtime — these stubs are only needed at compile time.
+# cuda-compat-12-8 installs libcuda.so.1 to /usr/local/cuda-12.8/compat/.
+# We add that to LD_LIBRARY_PATH and LIBRARY_PATH so the linker can resolve
+# both direct and transitive libcuda dependencies during compilation.
 ENV CUDACXX=/usr/local/cuda/bin/nvcc
-ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LIBRARY_PATH}
-ENV CMAKE_ARGS="-DGGML_CUDA=ON \
-  -DCMAKE_EXE_LINKER_FLAGS=-L/usr/local/cuda/lib64/stubs \
-  -DCMAKE_SHARED_LINKER_FLAGS=-L/usr/local/cuda/lib64/stubs"
-RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1 \
-    && pip3 install --no-cache-dir --no-binary=llama-cpp-python llama-cpp-python
+ENV CMAKE_ARGS="-DGGML_CUDA=ON"
+ENV LD_LIBRARY_PATH=/usr/local/cuda-12.8/compat:${LD_LIBRARY_PATH}
+ENV LIBRARY_PATH=/usr/local/cuda-12.8/compat:/usr/local/cuda/lib64/stubs:${LIBRARY_PATH}
+RUN pip3 install --no-cache-dir --no-binary=llama-cpp-python llama-cpp-python
 
 # ── Server Python dependencies ───────────────────────────────────────────────
 # Everything from requirements-server.txt EXCEPT llama-cpp-python (already
