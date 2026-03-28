@@ -59,6 +59,9 @@ class SuggestionEngine:
     def __init__(self):
         self.model_name = os.getenv("LLM_MODEL_PATH", "models/mistral-7b-instruct-v0.2.Q4_K_M.gguf")
         max_tokens      = int(os.getenv("LLM_MAX_TOKENS", 300))
+        self._always_actionable_customer = os.getenv("ALWAYS_ACTIONABLE_CUSTOMER", "true").strip().lower() in {
+            "1", "true", "yes", "on"
+        }
 
         log.info(f"Loading LLM from '{self.model_name}'...")
 
@@ -109,8 +112,35 @@ class SuggestionEngine:
         )
 
         raw_text = response["choices"][0]["message"]["content"].strip()
+        parsed = self._parse_response(raw_text, transcript)
+        return self._ensure_actionable_result(parsed, transcript)
 
-        return self._parse_response(raw_text, transcript)
+    def _ensure_actionable_result(self, result: dict, transcript: str) -> dict:
+        """Force an actionable fallback for non-empty customer transcripts when configured."""
+        if not self._always_actionable_customer:
+            return result
+        if not transcript or not transcript.strip():
+            return result
+
+        suggestion_type = str(result.get("type", "none") or "none")
+        suggestion_text = str(result.get("suggestion", "") or "").strip()
+        confidence = float(result.get("confidence", 0.0) or 0.0)
+        confidence = max(0.0, min(1.0, confidence))
+        reasoning_short = str(result.get("reasoning_short", "") or "").strip()
+
+        if suggestion_type != "none" and suggestion_text:
+            return result
+
+        fallback = {
+            "type": "question",
+            "suggestion": (
+                "Acknowledge their point briefly, then ask: "
+                "\"What matters most for you to feel confident moving forward?\""
+            ),
+            "reasoning_short": reasoning_short or "Fallback prompt applied when model returned no actionable guidance.",
+            "confidence": max(confidence, 0.35),
+        }
+        return fallback
 
     def _extract_first_json_object(self, text: str) -> str:
         """Return the first balanced JSON object found in text."""
