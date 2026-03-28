@@ -15,9 +15,9 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: "Docker image tag to publish"
-        required: true
-        default: "latest"
+        description: "Optional override tag to publish (leave empty to auto-increment v1.1.x)"
+        required: false
+        default: ""
 
 jobs:
   build-and-push:
@@ -42,12 +42,53 @@ jobs:
 
       - name: Determine image tag
         id: tag
+        env:
+          DOCKERHUB_NS: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_REPO: sales-copilot
+          MANUAL_TAG: ${{ github.event.inputs.image_tag }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=${{ github.event.inputs.image_tag }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=latest" >> "$GITHUB_OUTPUT"
-          fi
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import urllib.request
+
+          output_path = os.environ["GITHUB_OUTPUT"]
+          manual_tag = (os.environ.get("MANUAL_TAG") or "").strip()
+
+          if manual_tag:
+              with open(output_path, "a", encoding="utf-8") as f:
+                  f.write(f"tag={manual_tag}\n")
+                  f.write("tag_source=manual\n")
+              print(f"Using manual tag override: {manual_tag}")
+              raise SystemExit(0)
+
+          namespace = os.environ["DOCKERHUB_NS"]
+          repo = os.environ["DOCKERHUB_REPO"]
+          url = f"https://hub.docker.com/v2/repositories/{namespace}/{repo}/tags?page_size=100"
+
+          max_patch = 1
+          pattern = re.compile(r"^v1\.1\.(\d+)$")
+
+          while url:
+              with urllib.request.urlopen(url, timeout=20) as resp:
+                  payload = json.load(resp)
+              for tag in payload.get("results", []):
+                  name = tag.get("name", "")
+                  match = pattern.match(name)
+                  if match:
+                      max_patch = max(max_patch, int(match.group(1)))
+              url = payload.get("next")
+
+          next_tag = f"v1.1.{max(max_patch + 1, 2)}"
+          with open(output_path, "a", encoding="utf-8") as f:
+              f.write(f"tag={next_tag}\n")
+              f.write("tag_source=auto\n")
+          print(f"Auto-generated tag: {next_tag}")
+          PY
+
+      - name: Echo selected tag
+        run: echo "Publishing tag ${{ steps.tag.outputs.tag }} (${{ steps.tag.outputs.tag_source }})"
 
       - name: Build and push app image
         uses: docker/build-push-action@v6
