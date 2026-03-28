@@ -28,6 +28,11 @@ fi
 export LLM_MODEL_PATH="${MODEL_PATH}"
 
 # Start the FastAPI server
+if ! command -v python3.11 >/dev/null 2>&1; then
+    echo "ERROR: python3.11 not found in container."
+    exit 1
+fi
+
 echo "=== Starting server ==="
 cd /app/server
-exec python3 main.py
+exec python3.11 main.py

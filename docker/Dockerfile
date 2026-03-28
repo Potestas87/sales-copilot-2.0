@@ -31,7 +31,7 @@ COPY scripts/entrypoint.sh ./entrypoint.sh
 RUN mkdir -p /app/models && chmod +x /app/entrypoint.sh
 
 # Fail fast at build-time if critical runtime deps are missing from the base image.
-RUN python3 -c "import fastapi, uvicorn; print('runtime deps ok')"
+RUN python3.11 --version && python3.11 -c "import fastapi, uvicorn; print('runtime deps ok')"
 
 # Expose the FastAPI port
 EXPOSE 8000

@@ -46,12 +46,17 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 # ── System dependencies ──────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y \
-    python3 \
+    python3.11 \
+    python3.11-venv \
     python3-pip \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m pip install --upgrade pip setuptools wheel
+RUN python3.11 --version
+RUN python3.11 -m ensurepip --upgrade || true
+RUN python3.11 -m pip install --upgrade pip setuptools wheel
+# Keep python3 aligned with the interpreter used to install deps.
+RUN ln -sf /usr/bin/python3.11 /usr/local/bin/python3
 
 # ── llama-cpp-python (pre-compiled with CUDA) ────────────────────────────────
 # The wheel is downloaded from a GitHub Release by the CI workflow and placed
@@ -60,14 +65,19 @@ COPY wheels/llama_cpp_python*.whl /tmp/
 RUN set -eux; \
     WHEEL="$(ls /tmp/llama_cpp_python*.whl | head -n 1)"; \
     echo "Installing wheel: ${WHEEL}"; \
-    python3 --version; \
-    python3 -m pip --version; \
-    python3 -m pip install "${WHEEL}"; \
+    python3.11 --version; \
+    python3.11 -m pip --version; \
+    if echo "${WHEEL}" | grep -q "cp311"; then \
+      echo "Detected cp311 wheel; installing with python3.11"; \
+    else \
+      echo "WARNING: wheel is not cp311-tagged. Continuing, but this may fail."; \
+    fi; \
+    python3.11 -m pip install "${WHEEL}"; \
     rm -f /tmp/llama_cpp_python*.whl
 
 # ── Server Python dependencies ───────────────────────────────────────────────
 COPY requirements-server.txt /tmp/requirements-server.txt
-RUN python3 -m pip install --no-cache-dir -r /tmp/requirements-server.txt
+RUN python3.11 -m pip install --no-cache-dir -r /tmp/requirements-server.txt
 
 # ── Base image metadata ──────────────────────────────────────────────────────
 LABEL maintainer="potestas87"
