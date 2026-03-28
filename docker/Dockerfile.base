@@ -47,17 +47,32 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 # ── System dependencies ──────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y \
     python3.11 \
+    python3.11-venv \
     python3-pip \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip3 install --upgrade pip setuptools wheel
+RUN python3.11 -m ensurepip --upgrade || true
+RUN python3.11 -m pip install --upgrade pip setuptools wheel || true
 
 # ── llama-cpp-python (pre-compiled with CUDA) ────────────────────────────────
 # The wheel is downloaded from a GitHub Release by the CI workflow and placed
 # in the wheels/ directory before this Dockerfile runs.
 COPY wheels/llama_cpp_python*.whl /tmp/
-RUN pip3 install /tmp/llama_cpp_python*.whl && rm /tmp/llama_cpp_python*.whl
+RUN set -eux; \
+    WHEEL="$(ls /tmp/llama_cpp_python*.whl | head -n 1)"; \
+    echo "Installing wheel: ${WHEEL}"; \
+    python3 --version || true; \
+    pip3 --version || true; \
+    python3.11 --version || true; \
+    python3.11 -m pip --version || true; \
+    if echo "${WHEEL}" | grep -q "cp311"; then \
+      python3.11 -m pip install "${WHEEL}"; \
+    else \
+      pip3 install "${WHEEL}"; \
+    fi; \
+    rm -f /tmp/llama_cpp_python*.whl
 
 # ── Server Python dependencies ───────────────────────────────────────────────
 COPY requirements-server.txt /tmp/requirements-server.txt

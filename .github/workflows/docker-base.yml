@@ -39,6 +39,12 @@ jobs:
             --dir wheels/
           echo "Downloaded wheel:"
           ls -lh wheels/
+          WHEEL_FILE="$(ls wheels/llama_cpp_python*.whl | head -n 1)"
+          echo "Wheel filename: ${WHEEL_FILE}"
+          if [ -z "${WHEEL_FILE}" ]; then
+            echo "No wheel file found after download."
+            exit 1
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
