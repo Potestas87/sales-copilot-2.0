@@ -125,18 +125,18 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 # System dependencies
 RUN apt-get update && apt-get install -y \\
-    python3.11 python3-pip curl \\
+    python3 python3-pip curl \\
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install --upgrade pip setuptools wheel
+RUN python3 -m pip install --upgrade pip setuptools wheel
 
 # Install pre-compiled llama-cpp-python (CUDA baked in)
 COPY ${WHEEL_BASENAME} /tmp/${WHEEL_BASENAME}
-RUN pip3 install /tmp/${WHEEL_BASENAME} && rm /tmp/${WHEEL_BASENAME}
+RUN python3 -m pip install /tmp/${WHEEL_BASENAME} && rm /tmp/${WHEEL_BASENAME}
 
 # Install remaining Python dependencies
 COPY requirements-server.txt /tmp/requirements-server.txt
-RUN pip3 install --no-cache-dir -r /tmp/requirements-server.txt
+RUN python3 -m pip install --no-cache-dir -r /tmp/requirements-server.txt
 
 LABEL maintainer="${DOCKER_USER}"
 LABEL description="Sales Copilot base image — CUDA + llama-cpp-python (GPU) + faster-whisper"
