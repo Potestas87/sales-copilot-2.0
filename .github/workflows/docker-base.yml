@@ -1,20 +1,26 @@
 name: Docker Base Image
 
 # ── Trigger: manual only ─────────────────────────────────────────────────────
-# The base image contains CUDA + llama-cpp-python + faster-whisper and takes
-# 30-60 min to build. Only rebuild when you upgrade these dependencies.
+# The base image installs a pre-compiled llama-cpp-python wheel (built on a
+# GPU pod) plus all server dependencies. Rebuild when you:
+#   - Upload a new wheel to GitHub Releases (new llama-cpp-python version)
+#   - Change requirements-server.txt
 on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: "Tag for the base image (e.g. 'latest', 'cuda12.8-v1')"
+        description: "Tag for the base image (e.g. 'latest', 'v1.0.0')"
         required: true
         default: "latest"
+      wheel_release_tag:
+        description: "GitHub Release tag containing the llama-cpp-python wheel"
+        required: true
+        default: "base-v1.0.0"
 
 jobs:
   build-base:
     runs-on: ubuntu-latest
-    timeout-minutes: 120  # CUDA compilation is slow on 2-core runners
+    timeout-minutes: 30  # No CUDA compilation — just downloading and pip install
 
     env:
       IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/sales-copilot-base
@@ -22,6 +28,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Download llama-cpp-python wheel from GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p wheels
+          gh release download ${{ github.event.inputs.wheel_release_tag }} \
+            --pattern "llama_cpp_python*.whl" \
+            --dir wheels/
+          echo "Downloaded wheel:"
+          ls -lh wheels/
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -41,8 +58,5 @@ jobs:
           push: true
           tags: |
             ${{ env.IMAGE_NAME }}:${{ github.event.inputs.image_tag }}
-          # Cache layers in GitHub Actions cache to speed up rebuilds.
-          # The CUDA compilation layer is cached after the first successful build,
-          # so subsequent runs (even with code changes) skip it entirely.
           cache-from: type=gha
           cache-to: type=gha,mode=max

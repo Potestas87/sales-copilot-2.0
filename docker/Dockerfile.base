@@ -4,19 +4,35 @@
 #
 # This image contains everything that's slow to build and rarely changes:
 #   - CUDA 12.8 devel toolkit (nvcc, headers, cuBLAS)
-#   - llama-cpp-python compiled from source with GGML_CUDA=ON
+#   - llama-cpp-python pre-compiled with GGML_CUDA=ON
 #   - faster-whisper and its CTranslate2 backend
 #   - FastAPI, uvicorn, and all server Python dependencies
 #
-# Rebuild this image ONLY when you:
+# BUILD PROCESS
+# ─────────────
+# llama-cpp-python requires a real NVIDIA GPU driver (libcuda.so.1) to compile
+# with CUDA support. Since GitHub Actions runners have no GPU, we split the
+# build into two steps:
+#
+#   1. WHEEL (on GPU pod):  scripts/build-base-image.sh compiles the wheel
+#      and uploads it to a GitHub Release as a binary asset.
+#
+#   2. IMAGE (on GitHub Actions):  .github/workflows/docker-base.yml downloads
+#      the wheel from the release and builds this Dockerfile — no CUDA
+#      compilation needed. Runs in under 10 minutes.
+#
+# Rebuild ONLY when you:
 #   - Upgrade llama-cpp-python, faster-whisper, or CUDA versions
 #   - Add/remove packages in requirements-server.txt
 #
 # The app Dockerfile (docker/Dockerfile) inherits FROM this image and only
 # copies application code — making app builds take < 60 seconds.
 #
-# Build:
-#   docker build -t potestas87/sales-copilot-base:latest -f docker/Dockerfile.base .
+# CUDA ARCHITECTURE SUPPORT
+# ─────────────────────────
+# The wheel is compiled for: sm_75 (Turing), sm_80/86 (Ampere), sm_89 (Ada)
+# Newer GPUs (e.g. RTX 5090 / Blackwell sm_120a) JIT-compile from included
+# PTX at first launch via NVIDIA's forward-compatibility mechanism.
 #
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -25,52 +41,25 @@ FROM nvidia/cuda:12.8.0-devel-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 # ── NVIDIA Container Runtime ─────────────────────────────────────────────────
-# Expose GPUs and CUDA libraries inside the container on cloud GPU providers.
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 # ── System dependencies ──────────────────────────────────────────────────────
-# cuda-compat-12-8 provides libcuda.so.1 for linking during Docker builds
-# where no real GPU driver is present. At runtime on GPU hosts, the NVIDIA
-# Container Runtime injects the real driver — this is only for compilation.
 RUN apt-get update && apt-get install -y \
     python3.11 \
     python3-pip \
     curl \
-    cmake \
-    cuda-compat-12-8 \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Python build toolchain ───────────────────────────────────────────────────
-# Pre-install these so llama-cpp-python doesn't try to compile them from
-# source (which fails due to a pip/pyproject_hooks bug on older pip).
-RUN pip3 install --upgrade pip setuptools wheel \
-    && pip3 install scikit-build-core hatchling pluggy setuptools-scm ninja
+RUN pip3 install --upgrade pip setuptools wheel
 
-# ── Compile llama-cpp-python with CUDA GPU support ───────────────────────────
-# This is the expensive step (~30-60 min on 2-core CI, ~5 min on a GPU pod).
-#
-# The build challenge: llama.cpp's cmake tries to build CLI tools (mtmd-cli,
-# etc.) that link against libggml-cuda.so → libcuda.so.1. In a driverless
-# Docker build (no GPU), libcuda.so.1 doesn't exist, so the link fails.
-#
-# Solution (three-part):
-#   1. -DLLAMA_BUILD_TOOLS=OFF  → skip CLI executables we don't need
-#   2. --allow-shlib-undefined  → let shared libs defer libcuda symbols to runtime
-#   3. LIBRARY_PATH includes cuda stubs + compat dir for any remaining references
-#
-# At runtime on a GPU host, the NVIDIA Container Runtime injects the real
-# libcuda.so.1 driver, so all deferred symbols resolve correctly.
-ENV CUDACXX=/usr/local/cuda/bin/nvcc
-ENV CMAKE_ARGS="-DGGML_CUDA=ON -DLLAMA_BUILD_TOOLS=OFF -DCMAKE_SHARED_LINKER_FLAGS=-Wl,--allow-shlib-undefined -DCMAKE_LIBRARY_PATH=/usr/local/cuda/lib64/stubs"
-ENV FORCE_CMAKE=1
-ENV LD_LIBRARY_PATH=/usr/local/cuda-12.8/compat:/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH}
-ENV LIBRARY_PATH=/usr/local/cuda-12.8/compat:/usr/local/cuda/lib64/stubs:${LIBRARY_PATH}
-RUN pip3 install --no-cache-dir --no-binary=llama-cpp-python llama-cpp-python
+# ── llama-cpp-python (pre-compiled with CUDA) ────────────────────────────────
+# The wheel is downloaded from a GitHub Release by the CI workflow and placed
+# in the wheels/ directory before this Dockerfile runs.
+COPY wheels/llama_cpp_python*.whl /tmp/
+RUN pip3 install /tmp/llama_cpp_python*.whl && rm /tmp/llama_cpp_python*.whl
 
 # ── Server Python dependencies ───────────────────────────────────────────────
-# Everything from requirements-server.txt EXCEPT llama-cpp-python (already
-# installed above with CUDA). This layer caches until requirements change.
 COPY requirements-server.txt /tmp/requirements-server.txt
 RUN pip3 install --no-cache-dir -r /tmp/requirements-server.txt
 
