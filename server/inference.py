@@ -106,16 +106,44 @@ class SuggestionEngine:
             max_tokens  = self._max_tokens,
             temperature = 0.3,    # Low temperature = more consistent, focused output
                                   # High temperature = more creative but less reliable
-            stop        = ["}"],  # Stop after the closing brace of the JSON object
         )
 
         raw_text = response["choices"][0]["message"]["content"].strip()
 
-        # Ensure the JSON object is properly closed (stop token may have been consumed)
-        if not raw_text.endswith("}"):
-            raw_text += "}"
-
         return self._parse_response(raw_text, transcript)
+
+    def _extract_first_json_object(self, text: str) -> str:
+        """Return the first balanced JSON object found in text."""
+        start = text.find("{")
+        if start == -1:
+            raise ValueError("No JSON object found in response")
+
+        depth = 0
+        in_string = False
+        escaped = False
+
+        for i in range(start, len(text)):
+            ch = text[i]
+
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+                continue
+
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start:i + 1]
+
+        raise ValueError("Unterminated JSON object in response")
 
     def _parse_response(self, raw_text: str, original_transcript: str) -> dict:
         """
@@ -125,26 +153,52 @@ class SuggestionEngine:
         always receives a valid response — never a server error from bad JSON.
         """
         try:
-            # Find the JSON object in the response
-            # (LLM sometimes adds preamble text before the JSON)
-            start = raw_text.find("{")
-            if start == -1:
-                raise ValueError("No JSON object found in response")
+            # Extract the first balanced object; the model may add prose around JSON.
+            json_text = self._extract_first_json_object(raw_text)
+            parsed = json.loads(json_text)
 
-            parsed = json.loads(raw_text[start:])
-            suggestion_type = parsed.get("type", "none")
+            # Accept either direct schema or wrapped {"response": {...}} schema.
+            if isinstance(parsed.get("response"), dict):
+                parsed = parsed["response"]
+
+            raw_type = parsed.get("type")
+            raw_intent = parsed.get("intent")
+            had_explicit_label = raw_type is not None or raw_intent is not None
+
+            suggestion_type = str(raw_type or raw_intent or "none").strip().lower()
+            suggestion_type = suggestion_type.replace(" ", "_")
+            if suggestion_type in {"concern", "pushback", "rebuttal"}:
+                suggestion_type = "objection"
+            elif suggestion_type in {"buying", "buying_intent", "buy_signal", "signal"}:
+                suggestion_type = "buying_signal"
+
             if suggestion_type not in {"objection", "question", "buying_signal", "none"}:
                 suggestion_type = "none"
 
             confidence = float(parsed.get("confidence", 0.0) or 0.0)
             confidence = max(0.0, min(1.0, confidence))
-            reasoning_short = str(parsed.get("reasoning_short", "") or "").strip()
+            reasoning_short = str(
+                parsed.get("reasoning_short")
+                or parsed.get("reason")
+                or ""
+            ).strip()
             if len(reasoning_short) > 140:
                 reasoning_short = reasoning_short[:140].rstrip()
 
+            suggestion_text = str(
+                parsed.get("suggestion")
+                or parsed.get("message")
+                or parsed.get("action")
+                or ""
+            ).strip()
+
+            # Some model variants omit type but still provide actionable text.
+            if suggestion_text and suggestion_type == "none" and not had_explicit_label:
+                suggestion_type = "question"
+
             return {
                 "type":       suggestion_type,
-                "suggestion": parsed.get("suggestion", ""),
+                "suggestion": suggestion_text,
                 "reasoning_short": reasoning_short,
                 "confidence": confidence,
             }
