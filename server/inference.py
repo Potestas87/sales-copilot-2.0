@@ -165,15 +165,13 @@ class SuggestionEngine:
             raw_intent = parsed.get("intent")
             had_explicit_label = raw_type is not None or raw_intent is not None
 
-            suggestion_type = str(raw_type or raw_intent or "none").strip().lower()
+            original_label = str(raw_type or raw_intent or "none").strip().lower()
+            suggestion_type = original_label
             suggestion_type = suggestion_type.replace(" ", "_")
             if suggestion_type in {"concern", "pushback", "rebuttal"}:
                 suggestion_type = "objection"
             elif suggestion_type in {"buying", "buying_intent", "buy_signal", "signal"}:
                 suggestion_type = "buying_signal"
-
-            if suggestion_type not in {"objection", "question", "buying_signal", "none"}:
-                suggestion_type = "none"
 
             confidence = float(parsed.get("confidence", 0.0) or 0.0)
             confidence = max(0.0, min(1.0, confidence))
@@ -191,6 +189,15 @@ class SuggestionEngine:
                 or parsed.get("action")
                 or ""
             ).strip()
+
+            if suggestion_type not in {"objection", "question", "buying_signal", "none"}:
+                # Unknown labels like "action"/"recommendation" should stay actionable
+                # when we do have a usable suggestion text.
+                if suggestion_text:
+                    log.info("Normalising unknown intent label '%s' to 'question'", original_label)
+                    suggestion_type = "question"
+                else:
+                    suggestion_type = "none"
 
             # Some model variants omit type but still provide actionable text.
             if suggestion_text and suggestion_type == "none" and not had_explicit_label:

@@ -16,11 +16,11 @@ def test_parse_response_valid_json_with_prefix():
     assert parsed["confidence"] == 0.83
 
 
-def test_parse_response_invalid_type_falls_back_to_none():
+def test_parse_response_invalid_type_with_suggestion_becomes_actionable():
     engine = _engine()
     raw = '{"type":"something_else","suggestion":"x","confidence":0.3}'
     parsed = engine._parse_response(raw, "orig")
-    assert parsed["type"] == "none"
+    assert parsed["type"] == "question"
     assert parsed["confidence"] == 0.3
 
 
