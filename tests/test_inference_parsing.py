@@ -3,7 +3,9 @@ from tests._loaders import load_inference_module
 
 def _engine():
     inference = load_inference_module()
-    return object.__new__(inference.SuggestionEngine)
+    engine = object.__new__(inference.SuggestionEngine)
+    engine._always_actionable_customer = True
+    return engine
 
 
 def test_parse_response_valid_json_with_prefix():
@@ -77,3 +79,21 @@ def test_parse_response_promotes_action_text_when_type_missing():
     parsed = engine._parse_response(raw, "orig")
     assert parsed["type"] == "question"
     assert parsed["suggestion"] == "Ask one qualifying question before quoting."
+
+
+def test_ensure_actionable_result_promotes_none_to_question():
+    engine = _engine()
+    result = {"type": "none", "suggestion": "", "reasoning_short": "", "confidence": 0.0}
+    promoted = engine._ensure_actionable_result(result, "I need to think about this")
+    assert promoted["type"] == "question"
+    assert "What matters most for you to feel confident moving forward?" in promoted["suggestion"]
+    assert promoted["confidence"] >= 0.35
+
+
+def test_ensure_actionable_result_respects_feature_flag():
+    engine = _engine()
+    engine._always_actionable_customer = False
+    result = {"type": "none", "suggestion": "", "reasoning_short": "", "confidence": 0.0}
+    unchanged = engine._ensure_actionable_result(result, "I need to think about this")
+    assert unchanged["type"] == "none"
+    assert unchanged["suggestion"] == ""
