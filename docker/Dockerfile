@@ -30,6 +30,9 @@ COPY scripts/entrypoint.sh ./entrypoint.sh
 # to the persistent volume (/workspace on RunPod). This keeps the image lean.
 RUN mkdir -p /app/models && chmod +x /app/entrypoint.sh
 
+# Fail fast at build-time if critical runtime deps are missing from the base image.
+RUN python3 -c "import fastapi, uvicorn; print('runtime deps ok')"
+
 # Expose the FastAPI port
 EXPOSE 8000
 
