@@ -274,6 +274,10 @@ class WebSocketClient:
                     "reasoning_short": event.reasoning_short,
                     "confidence": event.confidence,
                     "latency_ms": event.latency_ms,
+                    "customer_name": event.customer_name,
+                    "address": event.address,
+                    "pain_points": event.pain_points,
+                    "package_summary": event.package_summary,
                 }
                 log.info(
                     "Received inference: speaker=%s intent=%s latency_ms=%.1f transcript='%s...'",

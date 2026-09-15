@@ -6,7 +6,7 @@ Typed websocket message models for server-side transport validation.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import List, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -39,3 +39,7 @@ class InferenceMessage(BaseModel):
     reasoning_short: str = ""
     confidence: float = Field(ge=0.0, le=1.0, default=0.0)
     latency_ms: float = Field(ge=0.0, default=0.0)
+    customer_name: str = ""
+    address: str = ""
+    pain_points: List[str] = Field(default_factory=list)
+    package_summary: str = ""

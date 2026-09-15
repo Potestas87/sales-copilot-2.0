@@ -59,7 +59,7 @@ class SuggestionEngine:
 
     def __init__(self):
         self.model_name = os.getenv("LLM_MODEL_PATH", "models/mistral-7b-instruct-v0.2.Q4_K_M.gguf")
-        max_tokens      = int(os.getenv("LLM_MAX_TOKENS", 300))
+        max_tokens      = int(os.getenv("LLM_MAX_TOKENS", 350))
         self._always_actionable_customer = os.getenv("ALWAYS_ACTIONABLE_CUSTOMER", "true").strip().lower() in {
             "1", "true", "yes", "on"
         }
@@ -114,7 +114,69 @@ class SuggestionEngine:
 
         raw_text = response["choices"][0]["message"]["content"].strip()
         parsed = self._parse_response(raw_text, transcript)
-        return self._ensure_actionable_result(parsed, transcript, conversation_turns or [])
+        final = self._ensure_actionable_result(parsed, transcript, conversation_turns or [])
+        return self._finalize_result(final, parsed)
+
+    @staticmethod
+    def _finalize_result(guardrail_result: dict, parsed: dict) -> dict:
+        """
+        Reattach extraction-only fields (name/address/pain points) after the
+        intent/suggestion guardrail pipeline has run.
+
+        _ensure_actionable_result()'s override paths (_apply_business_rules,
+        the RAC fallback) build fresh result dicts from scratch and know
+        nothing about extraction — reattaching here once, rather than
+        threading these fields through every guardrail branch, keeps that
+        already-hardened logic untouched.
+        """
+        guardrail_result = dict(guardrail_result)
+        guardrail_result["customer_name"] = parsed.get("customer_name", "")
+        guardrail_result["address"] = parsed.get("address", "")
+        guardrail_result["pain_points"] = parsed.get("pain_points", [])
+        return guardrail_result
+
+    def describe_best_offer(self, conversation_turns: list[dict]) -> str:
+        """Human-readable summary of the current best-offered pricing ladder."""
+        best = self._derive_offer_progress(conversation_turns)["best"]
+        summary = (
+            f"${best['initial']} initial, ${best['bimonthly']}/2mo, "
+            f"{best['term_months']}-month term"
+        )
+        if best.get("quarterly"):
+            summary += " + quarterly billing available"
+        return summary
+
+    @staticmethod
+    def merge_notepad(notepad: dict, updates: dict) -> dict:
+        """
+        Accumulate extracted deal details into the running per-session notepad.
+
+        Name/address only overwrite when the new value is non-empty (never
+        regress a known value back to blank); pain points append+dedup,
+        capped so the list can't grow unbounded over a long call.
+        """
+        notepad = {
+            "customer_name": notepad.get("customer_name", ""),
+            "address": notepad.get("address", ""),
+            "pain_points": list(notepad.get("pain_points", [])),
+        }
+
+        new_name = str(updates.get("customer_name", "") or "").strip()
+        if new_name:
+            notepad["customer_name"] = new_name
+
+        new_address = str(updates.get("address", "") or "").strip()
+        if new_address:
+            notepad["address"] = new_address
+
+        for point in updates.get("pain_points", []) or []:
+            point = str(point or "").strip()
+            if point and point not in notepad["pain_points"]:
+                notepad["pain_points"].append(point)
+        if len(notepad["pain_points"]) > 6:
+            notepad["pain_points"] = notepad["pain_points"][-6:]
+
+        return notepad
 
     @staticmethod
     def _detect_offer_from_text(text: str) -> dict:
@@ -471,11 +533,21 @@ class SuggestionEngine:
             if suggestion_text and suggestion_type == "none" and not had_explicit_label:
                 suggestion_type = "question"
 
+            customer_name = str(parsed.get("customer_name") or "").strip()[:80]
+            address = str(parsed.get("address") or "").strip()[:80]
+            raw_pain_points = parsed.get("pain_points") or []
+            if not isinstance(raw_pain_points, list):
+                raw_pain_points = []
+            pain_points = [str(p or "").strip()[:80] for p in raw_pain_points if str(p or "").strip()][:3]
+
             return {
                 "type":       suggestion_type,
                 "suggestion": suggestion_text,
                 "reasoning_short": reasoning_short,
                 "confidence": confidence,
+                "customer_name": customer_name,
+                "address": address,
+                "pain_points": pain_points,
             }
 
         except (json.JSONDecodeError, ValueError) as e:
@@ -485,4 +557,7 @@ class SuggestionEngine:
                 "suggestion": "",
                 "reasoning_short": "",
                 "confidence": 0.0,
+                "customer_name": "",
+                "address": "",
+                "pain_points": [],
             }

@@ -129,8 +129,16 @@ Your task:
 5. Provide confidence in your classification and recommendation in a field called
    "confidence" as a float between 0.0 and 1.0.
 
+6. Extract structured deal details ONLY when the customer explicitly and unambiguously
+   states them in THIS utterance — never guess or infer:
+   - "customer_name": the customer's name, if they state it. Empty string otherwise.
+   - "address": a physical address, if they state one. Empty string otherwise.
+   - "pain_points": a list of short phrases (a few words each) for any NEW concern or
+     priority driving their decision that they raise in this utterance. List only what's
+     new this turn, not a running summary. Empty list if nothing new.
+
 IMPORTANT: Always respond in valid JSON using exactly this format:
-{{"type": "<type>", "suggestion": "<suggestion text or empty string>", "reasoning_short": "<brief rationale>", "confidence": <0.0-1.0>}}
+{{"type": "<type>", "suggestion": "<suggestion text or empty string>", "reasoning_short": "<brief rationale>", "confidence": <0.0-1.0>, "customer_name": "<or empty string>", "address": "<or empty string>", "pain_points": [<short phrases, or empty list>]}}
 
 Do not include any text outside the JSON object. Do not add explanation or commentary."""
 

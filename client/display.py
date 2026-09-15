@@ -26,7 +26,7 @@ TYPE_COLOURS = {
 }
 
 WINDOW_WIDTH = 520
-WINDOW_HEIGHT = 320
+WINDOW_HEIGHT = 440
 WINDOW_X = 20
 WINDOW_Y = 20
 STALE_SUGGESTION_SECONDS = float(os.getenv("STALE_SUGGESTION_SECONDS", 12))
@@ -51,6 +51,15 @@ class SuggestionDisplay:
         self._current_reasoning_short = ""
         self._last_actionable_ts = 0.0
 
+        # Persistent deal notepad — accumulates over the whole call, unlike
+        # the suggestion card above which expires/clears per turn.
+        self._notepad = {
+            "customer_name": "",
+            "address": "",
+            "pain_points": [],
+            "package_summary": "",
+        }
+
     def show(
         self,
         suggestion: str,
@@ -60,6 +69,10 @@ class SuggestionDisplay:
         confidence: float = 0.0,
         latency_ms: float = 0.0,
         reasoning_short: str = "",
+        customer_name: str = "",
+        address: str = "",
+        pain_points: Optional[list] = None,
+        package_summary: str = "",
     ) -> None:
         """Queue a display update. Thread-safe and non-blocking."""
         self._update_queue.put(
@@ -71,6 +84,10 @@ class SuggestionDisplay:
                 "confidence": confidence,
                 "latency_ms": latency_ms,
                 "reasoning_short": reasoning_short,
+                "customer_name": customer_name,
+                "address": address,
+                "pain_points": pain_points or [],
+                "package_summary": package_summary,
             }
         )
 
@@ -153,7 +170,33 @@ class SuggestionDisplay:
             justify="left",
             anchor="nw",
         )
-        self._sales_label.pack(fill="x", padx=12, pady=(0, 10))
+        self._sales_label.pack(fill="x", padx=12, pady=(4, 8))
+
+        # ── Persistent deal notepad ────────────────────────────────────────
+        notepad_frame = tk.Frame(self._root, bg="#262626", highlightbackground="#3a3a3a", highlightthickness=1)
+        notepad_frame.pack(fill="x", padx=12, pady=(0, 10))
+
+        notepad_title = tk.Label(
+            notepad_frame,
+            text="DEAL NOTEPAD",
+            font=("Helvetica Neue", 9, "bold"),
+            bg="#262626",
+            fg="#8ab4f8",
+            anchor="w",
+        )
+        notepad_title.pack(fill="x", padx=8, pady=(6, 2))
+
+        self._notepad_label = tk.Label(
+            notepad_frame,
+            text="Name: —\nAddress: —\nPackage: —\nPain points: —",
+            font=("Helvetica Neue", 10),
+            bg="#262626",
+            fg="#d0d0d0",
+            wraplength=WINDOW_WIDTH - 40,
+            justify="left",
+            anchor="nw",
+        )
+        self._notepad_label.pack(fill="x", padx=8, pady=(0, 8))
 
     def _poll_updates(self) -> None:
         try:
@@ -198,7 +241,33 @@ class SuggestionDisplay:
             else:
                 self._clear_actionable()
 
+        self._merge_notepad(update)
         self._render()
+
+    def _merge_notepad(self, update: dict) -> None:
+        """
+        Overwrite-if-nonempty / append-dedup, mirroring the server's merge —
+        belt-and-suspenders so a later message that omits a field never
+        regresses a value the notepad already has.
+        """
+        new_name = str(update.get("customer_name", "") or "").strip()
+        if new_name:
+            self._notepad["customer_name"] = new_name
+
+        new_address = str(update.get("address", "") or "").strip()
+        if new_address:
+            self._notepad["address"] = new_address
+
+        new_package = str(update.get("package_summary", "") or "").strip()
+        if new_package:
+            self._notepad["package_summary"] = new_package
+
+        for point in update.get("pain_points", []) or []:
+            point = str(point or "").strip()
+            if point and point not in self._notepad["pain_points"]:
+                self._notepad["pain_points"].append(point)
+        if len(self._notepad["pain_points"]) > 6:
+            self._notepad["pain_points"] = self._notepad["pain_points"][-6:]
 
     def _expire_stale_suggestion(self) -> None:
         if self._current_suggestion_type == "none":
@@ -242,6 +311,22 @@ class SuggestionDisplay:
         self._customer_label.config(text=f"Customer: {customer_text}")
         self._sales_label.config(text=f"You: {sales_text}")
 
+        self._render_notepad()
+
+    def _render_notepad(self) -> None:
+        name = self._notepad["customer_name"] or "—"
+        address = self._notepad["address"] or "—"
+        package = self._notepad["package_summary"] or "—"
+        pain_points = ", ".join(self._notepad["pain_points"]) or "—"
+
+        text = (
+            f"Name: {name}\n"
+            f"Address: {address}\n"
+            f"Package: {package}\n"
+            f"Pain points: {self._clip_text(pain_points, 160)}"
+        )
+        self._notepad_label.config(text=text)
+
     @staticmethod
     def _clip_text(text: str, max_len: int) -> str:
         if len(text) <= max_len:
@@ -263,20 +348,23 @@ if __name__ == "__main__":
         {
             "speaker": "customer",
             "type": "objection",
-            "transcript": "I am not sure we can justify the cost right now.",
+            "transcript": "I am not sure we can justify the cost right now. This is Sarah, by the way.",
             "suggestion": "Totally fair. Teams like yours usually justify this via reduced churn in under one quarter.",
             "reasoning_short": "Pricing concern detected; ROI framing is most relevant.",
             "confidence": 0.86,
             "latency_ms": 1240.0,
+            "customer_name": "Sarah",
+            "pain_points": ["worried about cost"],
         },
         {
             "speaker": "salesperson",
             "type": "none",
-            "transcript": "Would it help if I showed a 90-day ROI model?",
+            "transcript": "I can do $99 initial and $150 bimonthly on a 24-month term.",
             "suggestion": "",
             "reasoning_short": "",
             "confidence": 0.0,
             "latency_ms": 980.0,
+            "package_summary": "$99 initial, $150/2mo, 24-month term",
         },
         {
             "speaker": "customer",
@@ -286,6 +374,7 @@ if __name__ == "__main__":
             "reasoning_short": "Direct onboarding question; answer with timeline and support model.",
             "confidence": 0.91,
             "latency_ms": 1105.0,
+            "pain_points": ["concerned about onboarding time"],
         },
     ]
 
@@ -299,6 +388,10 @@ if __name__ == "__main__":
                 confidence=event["confidence"],
                 latency_ms=event["latency_ms"],
                 reasoning_short=event["reasoning_short"],
+                customer_name=event.get("customer_name", ""),
+                address=event.get("address", ""),
+                pain_points=event.get("pain_points", []),
+                package_summary=event.get("package_summary", ""),
             )
             time.sleep(3)
         display.stop()

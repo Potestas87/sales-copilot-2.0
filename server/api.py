@@ -154,6 +154,7 @@ async def websocket_endpoint(websocket: WebSocket):
     client_host = websocket.client.host
     log.info(f"Client connected: {client_host}")
     conversation_turns: list[dict] = []
+    notepad_state: dict = {"customer_name": "", "address": "", "pain_points": []}
     latency_tracker = LatencyTracker(window_size=LATENCY_STATS_WINDOW)
 
     try:
@@ -195,6 +196,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     reasoning_short="",
                     confidence=0.0,
                     latency_ms=end_to_end_latency_ms,
+                    customer_name=notepad_state["customer_name"],
+                    address=notepad_state["address"],
+                    pain_points=notepad_state["pain_points"],
+                    package_summary=suggestion_engine.describe_best_offer(conversation_turns),
                 )
                 await websocket.send_text(response.model_dump_json())
                 continue
@@ -216,9 +221,15 @@ async def websocket_endpoint(websocket: WebSocket):
             if payload.speaker == "customer":
                 prior_turns = conversation_turns[:-1]
                 result = suggestion_engine.analyse(transcript, prior_turns)
+                notepad_state = suggestion_engine.merge_notepad(notepad_state, result)
             else:
                 log.info("Skipping rebuttal inference for salesperson turn.")
                 result = {"type": "none", "suggestion": "", "reasoning_short": "", "confidence": 0.0}
+
+            # Package/pricing is derived deterministically from salesperson lines
+            # in conversation_turns — recomputed every turn so it reflects the
+            # latest offer immediately, not just on the next customer turn.
+            package_summary = suggestion_engine.describe_best_offer(conversation_turns)
 
             # ── Send response ─────────────────────────────────────────────────
             # Always include the transcript so the client can display a live feed.
@@ -237,6 +248,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 reasoning_short=result.get("reasoning_short", ""),
                 confidence=confidence,
                 latency_ms=end_to_end_latency_ms,
+                customer_name=notepad_state["customer_name"],
+                address=notepad_state["address"],
+                pain_points=notepad_state["pain_points"],
+                package_summary=package_summary,
             )
 
             await websocket.send_text(response.model_dump_json())

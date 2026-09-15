@@ -62,6 +62,10 @@ def main():
             confidence      = data.get("confidence", 0.0),
             latency_ms      = data.get("latency_ms", 0.0),
             reasoning_short = data.get("reasoning_short", ""),
+            customer_name   = data.get("customer_name", ""),
+            address         = data.get("address", ""),
+            pain_points     = data.get("pain_points", []),
+            package_summary = data.get("package_summary", ""),
         )
 
     ws_client = WebSocketClient(on_response=on_server_response)

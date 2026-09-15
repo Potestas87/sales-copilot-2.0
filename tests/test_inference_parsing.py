@@ -34,6 +34,9 @@ def test_parse_response_malformed_json_is_safe_default():
         "suggestion": "",
         "reasoning_short": "",
         "confidence": 0.0,
+        "customer_name": "",
+        "address": "",
+        "pain_points": [],
     }
 
 
@@ -190,3 +193,103 @@ def test_rac_fallback_goes_to_quarterly_after_three_steps():
     result = {"type": "none", "suggestion": "", "reasoning_short": "", "confidence": 0.2}
     out = engine._ensure_actionable_result(result, "Still too high for me.", turns)
     assert "quarterly billing" in out["suggestion"].lower()
+
+
+# ── Deal notepad: extraction, reattachment, merge, package summary ────────────
+
+def test_parse_response_extracts_notepad_fields_when_present():
+    engine = _engine()
+    raw = (
+        '{"type":"question","suggestion":"Sure.","confidence":0.7,'
+        '"customer_name":"Sarah","address":"123 Main St","pain_points":["worried about setup time"]}'
+    )
+    parsed = engine._parse_response(raw, "orig")
+    assert parsed["customer_name"] == "Sarah"
+    assert parsed["address"] == "123 Main St"
+    assert parsed["pain_points"] == ["worried about setup time"]
+
+
+def test_parse_response_defaults_notepad_fields_when_absent():
+    engine = _engine()
+    parsed = engine._parse_response('{"type":"question","suggestion":"Sure."}', "orig")
+    assert parsed["customer_name"] == ""
+    assert parsed["address"] == ""
+    assert parsed["pain_points"] == []
+
+
+def test_parse_response_malformed_json_still_has_notepad_defaults():
+    engine = _engine()
+    parsed = engine._parse_response("{not-json", "orig")
+    assert parsed["customer_name"] == ""
+    assert parsed["address"] == ""
+    assert parsed["pain_points"] == []
+
+
+def test_parse_response_ignores_non_list_pain_points():
+    engine = _engine()
+    parsed = engine._parse_response(
+        '{"type":"question","suggestion":"Sure.","pain_points":"not a list"}', "orig"
+    )
+    assert parsed["pain_points"] == []
+
+
+def test_finalize_result_reattaches_extraction_after_business_rule_override():
+    engine = _engine()
+    # Simulate a guardrail override (a fresh dict, as _apply_business_rules returns)
+    # that knows nothing about extraction fields.
+    guardrail_result = {
+        "type": "objection",
+        "suggestion": "Let's stay at your best offered terms so far.",
+        "reasoning_short": "Prevented regressive offer.",
+        "confidence": 0.75,
+    }
+    parsed = {
+        "type": "question",
+        "suggestion": "original",
+        "customer_name": "Sarah",
+        "address": "123 Main St",
+        "pain_points": ["worried about setup time"],
+    }
+    out = engine._finalize_result(guardrail_result, parsed)
+    assert out["type"] == "objection"  # guardrail's type/suggestion win
+    assert out["suggestion"] == "Let's stay at your best offered terms so far."
+    assert out["customer_name"] == "Sarah"  # extraction fields still survive
+    assert out["address"] == "123 Main St"
+    assert out["pain_points"] == ["worried about setup time"]
+
+
+def test_merge_notepad_overwrites_only_on_nonempty():
+    engine = _engine()
+    notepad = {"customer_name": "Sarah", "address": "", "pain_points": []}
+    out = engine.merge_notepad(notepad, {"customer_name": "", "address": "123 Main St"})
+    assert out["customer_name"] == "Sarah"  # not regressed by empty update
+    assert out["address"] == "123 Main St"
+
+
+def test_merge_notepad_dedupes_and_caps_pain_points():
+    engine = _engine()
+    notepad = {"customer_name": "", "address": "", "pain_points": []}
+    for i in range(8):
+        notepad = engine.merge_notepad(notepad, {"pain_points": [f"concern {i}"]})
+    notepad = engine.merge_notepad(notepad, {"pain_points": ["concern 3"]})  # duplicate
+    assert len(notepad["pain_points"]) == 6
+    assert notepad["pain_points"] == [f"concern {i}" for i in range(2, 8)]
+
+
+def test_describe_best_offer_formats_current_ladder():
+    engine = _engine()
+    turns = [
+        {"speaker": "salesperson", "transcript": "We start at 24 months, $175 initial and $150 bimonthly."},
+        {"speaker": "salesperson", "transcript": "I can do $99 initial and keep bimonthly at $150."},
+    ]
+    summary = engine.describe_best_offer(turns)
+    assert "$99 initial" in summary
+    assert "$150/2mo" in summary
+    assert "24-month term" in summary
+
+
+def test_describe_best_offer_defaults_with_no_turns():
+    engine = _engine()
+    summary = engine.describe_best_offer([])
+    assert "$175 initial" in summary
+    assert "24-month term" in summary

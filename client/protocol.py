@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import base64
 import json
-from dataclasses import asdict, dataclass
-from typing import Literal
+from dataclasses import asdict, dataclass, field
+from typing import List, Literal
 
 import numpy as np
 
@@ -61,6 +61,10 @@ class InferenceMessage:
     reasoning_short: str
     confidence: float
     latency_ms: float
+    customer_name: str = ""
+    address: str = ""
+    pain_points: List[str] = field(default_factory=list)
+    package_summary: str = ""
 
     @classmethod
     def from_json(cls, raw_message: str) -> "InferenceMessage":
@@ -76,4 +80,8 @@ class InferenceMessage:
             reasoning_short=parsed.get("reasoning_short", ""),
             confidence=float(parsed.get("confidence", 0.0)),
             latency_ms=float(parsed.get("latency_ms", 0.0)),
+            customer_name=parsed.get("customer_name", ""),
+            address=parsed.get("address", ""),
+            pain_points=list(parsed.get("pain_points", []) or []),
+            package_summary=parsed.get("package_summary", ""),
         )
