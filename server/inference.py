@@ -211,8 +211,8 @@ class SuggestionEngine:
 
         if rac_steps >= 3:
             return (
-                "Final option: I can offer quarterly service from here so we still keep protection in place. "
-                "Would quarterly service solve the concern enough to move forward?"
+                "Final option: I can offer quarterly billing from here so we still keep support coverage in place. "
+                "Would quarterly billing solve the concern enough to move forward?"
             )
 
         # RAC 1: move initial to 99, keep bimonthly 150
@@ -293,7 +293,7 @@ class SuggestionEngine:
         return False
 
     def _apply_business_rules(self, result: dict, transcript: str, progress: dict) -> Optional[dict]:
-        """Enforce Brooks-specific guardrails and high-priority talk-track overrides."""
+        """Enforce product-specific guardrails and high-priority talk-track overrides."""
         transcript_l = transcript.lower()
         suggestion = str(result.get("suggestion", "") or "").strip()
         suggestion_l = suggestion.lower()
@@ -316,11 +316,11 @@ class SuggestionEngine:
             return {
                 "type": "question",
                 "suggestion": (
-                    f"Great question. Right now the initial service is ${best['initial']} (normally $350), "
-                    f"then it's ${best['bimonthly']} every two months. "
+                    f"Great question. Right now the initial setup is ${best['initial']} (normally $350), "
+                    f"then it's ${best['bimonthly']} every two months for support. "
                     f"We start at {best['term_months']} months and if needed we can step down to 18, then 12 to find the best fit."
                 ),
-                "reasoning_short": "Pricing question answered with Brooks anchors and approved term ladder.",
+                "reasoning_short": "Pricing question answered with approved anchors and term ladder.",
                 "confidence": max(float(result.get("confidence", 0.0) or 0.0), 0.8),
             }
 

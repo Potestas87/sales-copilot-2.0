@@ -4,12 +4,12 @@
 # Update these values for your specific company and product before deploying.
 # The LLM reads this at startup — no code changes needed to update sales guidance.
 
-product_name: "Brooks Pest Control"
+product_name: "NimbusCare"
 
 product_description: >
-  Brooks Pest Control provides residential pest control service plans. Sales calls
-  should emphasize clear pricing, predictable service frequency, and flexible term
-  options to help customers choose a plan they can commit to.
+  NimbusCare provides managed IT and software support plans for small businesses.
+  Sales calls should emphasize clear pricing, predictable support frequency, and
+  flexible term options to help customers choose a plan they can commit to.
 
 value_propositions:
   - "Current promotion: initial service is $175 (50% off the standard $350 initial)."
@@ -27,28 +27,28 @@ objection_guidance:
     summary: "Too expensive"
     angle: >
       Acknowledge price pressure clearly. Re-anchor with concrete numbers:
-      initial service is currently $175 (normally $350), and bimonthly follow-ups
-      are $150. If affordability is the blocker, preserve value by moving term
-      length in order: 24 months -> 18 months -> 12 months.
+      initial setup is currently $175 (normally $350), and bimonthly support
+      billing is $150. If affordability is the blocker, preserve value by moving
+      term length in order: 24 months -> 18 months -> 12 months.
 
   timing:
     summary: "Not the right time / too busy right now"
     angle: >
-      Validate timing, then ask a next-step question tied to service cadence.
-      Remind them follow-up visits are every two months and ask what start timing
+      Validate timing, then ask a next-step question tied to support cadence.
+      Remind them support check-ins are every two months and ask what start timing
       would feel workable.
 
   competitor:
     summary: "We already use [competitor]"
     angle: >
       Do not attack competitors. Ask what they like and what they wish were
-      better, then position Brooks terms and pricing structure clearly.
+      better, then position NimbusCare's terms and pricing structure clearly.
 
   complexity:
     summary: "Seems complicated / hard to adopt"
     angle: >
-      Keep it simple and concrete: one initial service at $175 and then a
-      predictable every-two-month follow-up at $150. Explain options briefly
+      Keep it simple and concrete: one initial setup at $175 and then a
+      predictable every-two-month support billing at $150. Explain options briefly
       and ask one clarifying question rather than over-explaining.
 
   authority:
@@ -68,5 +68,5 @@ objection_guidance:
 buying_signal_guidance: >
   When the customer shows interest or asks about next steps, move toward closing
   with a clear recap of plan economics and term. Confirm: $175 initial (promo),
-  $150 every-two-month follow-up, and default 24-month term with 18/12-month
+  $150 every-two-month support billing, and default 24-month term with 18/12-month
   options only as needed to close.
