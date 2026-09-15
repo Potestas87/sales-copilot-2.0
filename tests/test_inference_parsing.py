@@ -125,7 +125,7 @@ def test_business_rule_spouse_smokescreen_gets_pullback_question():
     assert "what would your husband/wife need to hear" in out["suggestion"].lower()
 
 
-def test_business_rule_pricing_question_gets_brooks_anchors():
+def test_business_rule_pricing_question_gets_pricing_anchors():
     engine = _engine()
     result = {"type": "none", "suggestion": "", "reasoning_short": "", "confidence": 0.1}
     out = engine._ensure_actionable_result(result, "How much total would this cost?", [])
@@ -189,4 +189,4 @@ def test_rac_fallback_goes_to_quarterly_after_three_steps():
     ]
     result = {"type": "none", "suggestion": "", "reasoning_short": "", "confidence": 0.2}
     out = engine._ensure_actionable_result(result, "Still too high for me.", turns)
-    assert "quarterly service" in out["suggestion"].lower()
+    assert "quarterly billing" in out["suggestion"].lower()

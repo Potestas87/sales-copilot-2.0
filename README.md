@@ -84,7 +84,9 @@ sales-copilot/
 
 ## Prerequisites
 
-- **Mac** with Python 3.11+
+- **Mac** with Python 3.11+, including Tk/Tkinter support (used for the live
+  suggestion display window). Python.org installers include this by default;
+  Homebrew Python needs it installed separately, e.g. `brew install python-tk@3.11`.
 - **BlackHole** virtual audio driver (routes call audio to the client)
 - **Docker** with buildx support (for building the server image)
 - **RunPod account** with an SSH key configured
@@ -148,6 +150,12 @@ The LLM's behavior is configured through `config/sales_playbook.yaml` — no cod
 - **Tone** — the conversational style for generated suggestions
 
 Edit the YAML to match your product and rebuild the Docker image to deploy changes.
+
+Note: the YAML covers tone, objection copy, and value propositions, but the hard
+pricing-ladder guardrails (dollar figures, term step-downs, offer-regression
+prevention) are enforced directly in `server/inference.py`, not read from the
+YAML. Fully retargeting the guardrails to a new product currently means editing
+both files — moving them into the YAML is a planned follow-up.
 
 ## CI/CD
 

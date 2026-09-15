@@ -22,7 +22,10 @@ on:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    timeout-minutes: 10  # App image builds are fast — no compilation
+    # 25min: no compilation happens here, but `no-cache: true` + `pull: true`
+    # below force a full, uncached rebuild and a fresh base-image pull every
+    # run, which can take well over the 10min this used to be set to.
+    timeout-minutes: 25
 
     env:
       IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/sales-copilot

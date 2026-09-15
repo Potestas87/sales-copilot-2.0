@@ -5,6 +5,18 @@ name: Docker Base Image
 # GPU pod) plus all server dependencies. Rebuild when you:
 #   - Upload a new wheel to GitHub Releases (new llama-cpp-python version)
 #   - Change requirements-server.txt
+#
+# NOT CURRENTLY WIRED UP:
+#   This workflow only downloads a wheel from an existing GitHub Release — it
+#   does not build or upload one. Nothing in this repo automates uploading the
+#   llama_cpp_python*.whl to a Release, so `wheel_release_tag` must already
+#   point at a Release you created and attached a wheel to by hand, or this
+#   run fails immediately on the download step.
+#
+#   The standard/current path is scripts/build-base-image.sh, run manually on
+#   a GPU pod — it compiles the wheel and pushes the finished base image to
+#   Docker Hub directly, bypassing this workflow entirely. Use that unless you
+#   deliberately set up the manual Release-upload step this workflow assumes.
 on:
   workflow_dispatch:
     inputs:
