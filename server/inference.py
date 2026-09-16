@@ -68,12 +68,12 @@ class SuggestionEngine:
 
         # n_gpu_layers=-1 offloads all layers to GPU — maximum speed.
         # n_ctx=2048 is the context window — enough for a sales conversation history.
-        # verbose=False suppresses llama.cpp's internal logging noise.
+        # verbose=True temporarily, to diagnose a silent crash on model load.
         self._llm = Llama(
             model_path   = self.model_name,
             n_gpu_layers = -1,
             n_ctx        = 2048,
-            verbose      = False,
+            verbose      = True,
         )
         self._max_tokens   = max_tokens
         self._system_prompt = build_system_prompt()
