@@ -24,6 +24,16 @@ else
     echo "=== Model already exists at ${MODEL_PATH}, skipping download ==="
 fi
 
+# TEMPORARY DIAGNOSTIC: read the full model file with dd (no llama.cpp
+# involved) to isolate whether the crash we're chasing is a generic
+# memory/volume-I/O limit or specific to llama-cpp-python's tensor loading.
+echo "=== DIAGNOSTIC: reading full model file with dd ==="
+dd if="${MODEL_PATH}" of=/dev/null bs=64M status=progress
+echo "=== DIAGNOSTIC: dd read completed successfully ==="
+echo "=== DIAGNOSTIC: memory info ==="
+free -h || true
+cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || echo "cgroup memory info not found"
+
 # Export the model path so the server can find it
 export LLM_MODEL_PATH="${MODEL_PATH}"
 
