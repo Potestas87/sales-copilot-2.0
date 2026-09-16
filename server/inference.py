@@ -66,13 +66,13 @@ class SuggestionEngine:
 
         log.info(f"Loading LLM from '{self.model_name}'...")
 
-        # n_gpu_layers=0 TEMPORARY DIAGNOSTIC: force CPU-only load to isolate
-        # whether the silent crash is in CUDA tensor upload or elsewhere.
+        # n_gpu_layers=-1 offloads all layers to GPU — maximum speed.
         # n_ctx=2048 is the context window — enough for a sales conversation history.
+        # use_mmap=False avoids relying on mmap over the RunPod volume mount.
         # verbose=False suppresses llama.cpp's internal logging noise.
         self._llm = Llama(
             model_path   = self.model_name,
-            n_gpu_layers = 0,
+            n_gpu_layers = -1,
             n_ctx        = 2048,
             use_mmap     = False,
             verbose      = False,

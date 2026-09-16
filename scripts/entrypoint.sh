@@ -7,9 +7,14 @@
 set -e
 
 MODEL_DIR="/workspace/models"
-MODEL_FILE="mistral-7b-instruct-v0.2.Q4_K_M.gguf"
+MODEL_FILE="mistral-7b-instruct-v0.2.Q4_K_M.secondstate.gguf"
 MODEL_PATH="${MODEL_DIR}/${MODEL_FILE}"
-MODEL_URL="https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/${MODEL_FILE}"
+# Re-quantized by second-state (actively maintained) instead of TheBloke
+# (inactive since 2023) - the old file was crashing llama-cpp-python's
+# tensor loader identically on CPU and GPU, on every GPU type tried, with
+# raw disk reads and memory both proven fine - pointing at a GGUF/quant
+# compatibility issue with this specific file rather than the environment.
+MODEL_URL="https://huggingface.co/second-state/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/Mistral-7B-Instruct-v0.2-Q4_K_M.gguf"
 
 # Create model directory on the persistent volume
 mkdir -p "${MODEL_DIR}"
@@ -23,16 +28,6 @@ if [ ! -f "${MODEL_PATH}" ]; then
 else
     echo "=== Model already exists at ${MODEL_PATH}, skipping download ==="
 fi
-
-# TEMPORARY DIAGNOSTIC: read the full model file with dd (no llama.cpp
-# involved) to isolate whether the crash we're chasing is a generic
-# memory/volume-I/O limit or specific to llama-cpp-python's tensor loading.
-echo "=== DIAGNOSTIC: reading full model file with dd ==="
-dd if="${MODEL_PATH}" of=/dev/null bs=64M status=progress
-echo "=== DIAGNOSTIC: dd read completed successfully ==="
-echo "=== DIAGNOSTIC: memory info ==="
-free -h || true
-cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || echo "cgroup memory info not found"
 
 # Export the model path so the server can find it
 export LLM_MODEL_PATH="${MODEL_PATH}"
