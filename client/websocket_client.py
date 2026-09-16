@@ -173,9 +173,9 @@ class WebSocketClient:
         Creates a new asyncio event loop (each thread needs its own)
         and runs the main connection coroutine inside it.
         """
-        self._loop       = asyncio.new_event_loop()
-        self._send_queue = asyncio.Queue(maxsize=self._send_queue_maxsize)
+        self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
+        self._send_queue = asyncio.Queue(maxsize=self._send_queue_maxsize)
 
         try:
             self._loop.run_until_complete(self._connect_with_retry())
