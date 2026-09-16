@@ -15,6 +15,7 @@ import numpy as np
 
 Speaker = Literal["customer", "salesperson"]
 Intent = Literal["objection", "question", "buying_signal", "none"]
+BuyingTemperature = Literal["hot", "warm", "cold", ""]
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,7 @@ class InferenceMessage:
     address: str = ""
     pain_points: List[str] = field(default_factory=list)
     package_summary: str = ""
+    buying_temperature: BuyingTemperature = ""
 
     @classmethod
     def from_json(cls, raw_message: str) -> "InferenceMessage":
@@ -84,4 +86,5 @@ class InferenceMessage:
             address=parsed.get("address", ""),
             pain_points=list(parsed.get("pain_points", []) or []),
             package_summary=parsed.get("package_summary", ""),
+            buying_temperature=parsed.get("buying_temperature", ""),
         )

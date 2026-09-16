@@ -25,6 +25,14 @@ TYPE_COLOURS = {
     "none": {"bg": "#424242", "fg": "#aaaaaa", "label": "LISTENING"},
 }
 
+# Colors for the buying-temperature indicator
+TEMPERATURE_COLOURS = {
+    "hot": {"fg": "#ff6b4a", "label": "\U0001F525 HOT"},
+    "warm": {"fg": "#e6c266", "label": "WARM"},
+    "cold": {"fg": "#6fa8dc", "label": "COLD"},
+    "": {"fg": "#707070", "label": "Buying temp: —"},
+}
+
 WINDOW_WIDTH = 520
 WINDOW_HEIGHT = 440
 WINDOW_X = 20
@@ -58,6 +66,7 @@ class SuggestionDisplay:
             "address": "",
             "pain_points": [],
             "package_summary": "",
+            "buying_temperature": "",
         }
 
     def show(
@@ -73,6 +82,7 @@ class SuggestionDisplay:
         address: str = "",
         pain_points: Optional[list] = None,
         package_summary: str = "",
+        buying_temperature: str = "",
     ) -> None:
         """Queue a display update. Thread-safe and non-blocking."""
         self._update_queue.put(
@@ -88,6 +98,7 @@ class SuggestionDisplay:
                 "address": address,
                 "pain_points": pain_points or [],
                 "package_summary": package_summary,
+                "buying_temperature": buying_temperature,
             }
         )
 
@@ -123,6 +134,16 @@ class SuggestionDisplay:
             anchor="w",
         )
         self._badge.pack(fill="x", padx=10, pady=(10, 4))
+
+        self._temp_label = tk.Label(
+            self._root,
+            text=TEMPERATURE_COLOURS[""]["label"],
+            font=("Helvetica Neue", 9, "bold"),
+            bg="#1e1e1e",
+            fg=TEMPERATURE_COLOURS[""]["fg"],
+            anchor="w",
+        )
+        self._temp_label.pack(fill="x", padx=12, pady=(0, 2))
 
         self._suggestion_label = tk.Label(
             self._root,
@@ -262,6 +283,10 @@ class SuggestionDisplay:
         if new_package:
             self._notepad["package_summary"] = new_package
 
+        new_temperature = str(update.get("buying_temperature", "") or "").strip().lower()
+        if new_temperature in TEMPERATURE_COLOURS and new_temperature:
+            self._notepad["buying_temperature"] = new_temperature
+
         for point in update.get("pain_points", []) or []:
             point = str(point or "").strip()
             if point and point not in self._notepad["pain_points"]:
@@ -287,6 +312,10 @@ class SuggestionDisplay:
     def _render(self) -> None:
         colours = TYPE_COLOURS.get(self._current_suggestion_type, TYPE_COLOURS["none"])
         self._badge.config(text=colours["label"], bg=colours["bg"], fg=colours["fg"])
+
+        temp = self._notepad.get("buying_temperature", "")
+        temp_colours = TEMPERATURE_COLOURS.get(temp, TEMPERATURE_COLOURS[""])
+        self._temp_label.config(text=temp_colours["label"], fg=temp_colours["fg"])
 
         if self._current_suggestion:
             self._suggestion_label.config(
@@ -355,6 +384,7 @@ if __name__ == "__main__":
             "latency_ms": 1240.0,
             "customer_name": "Sarah",
             "pain_points": ["worried about cost"],
+            "buying_temperature": "cold",
         },
         {
             "speaker": "salesperson",
@@ -375,6 +405,7 @@ if __name__ == "__main__":
             "confidence": 0.91,
             "latency_ms": 1105.0,
             "pain_points": ["concerned about onboarding time"],
+            "buying_temperature": "hot",
         },
     ]
 
@@ -392,6 +423,7 @@ if __name__ == "__main__":
                 address=event.get("address", ""),
                 pain_points=event.get("pain_points", []),
                 package_summary=event.get("package_summary", ""),
+                buying_temperature=event.get("buying_temperature", ""),
             )
             time.sleep(3)
         display.stop()

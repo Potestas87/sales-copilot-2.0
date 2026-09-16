@@ -65,6 +65,7 @@ def build_system_prompt() -> str:
     tone          = playbook.get("tone", "professional, confident, and empathetic")
     objection_guidance  = playbook.get("objection_guidance", {})
     buying_signal_guide = playbook.get("buying_signal_guidance", "")
+    temperature_guide   = playbook.get("buying_temperature_guidance", {})
 
     value_prop_text = ""
     if value_props:
@@ -87,6 +88,16 @@ def build_system_prompt() -> str:
     if buying_signal_guide:
         buying_signal_text = f"Buying signal guidance:\n  {buying_signal_guide.strip()}"
 
+    temperature_text = ""
+    if temperature_guide:
+        entries = []
+        for level in ("hot", "warm", "cold"):
+            cue = str(temperature_guide.get(level, "")).strip()
+            if cue:
+                entries.append(f'  "{level}" — {cue}')
+        if entries:
+            temperature_text = "Buying temperature cues:\n" + "\n".join(entries)
+
     system_prompt = f"""You are a real-time sales copilot assistant. Your job is to analyse what a customer
 just said on a sales call and help the salesperson respond effectively.
 
@@ -97,6 +108,8 @@ Product: {product_name}
 {objection_text}
 
 {buying_signal_text}
+
+{temperature_text}
 
 Tone: {tone}
 
@@ -137,8 +150,12 @@ Your task:
      priority driving their decision that they raise in this utterance. List only what's
      new this turn, not a running summary. Empty list if nothing new.
 
+7. Assess the overall "buying_temperature" for the call using ALL conversation context
+   so far, not just this utterance — one of "hot", "warm", or "cold" (see cues above).
+   Always return your best estimate; never leave this blank.
+
 IMPORTANT: Always respond in valid JSON using exactly this format:
-{{"type": "<type>", "suggestion": "<suggestion text or empty string>", "reasoning_short": "<brief rationale>", "confidence": <0.0-1.0>, "customer_name": "<or empty string>", "address": "<or empty string>", "pain_points": [<short phrases, or empty list>]}}
+{{"type": "<type>", "suggestion": "<suggestion text or empty string>", "reasoning_short": "<brief rationale>", "confidence": <0.0-1.0>, "customer_name": "<or empty string>", "address": "<or empty string>", "pain_points": [<short phrases, or empty list>], "buying_temperature": "<hot|warm|cold>"}}
 
 Do not include any text outside the JSON object. Do not add explanation or commentary."""
 

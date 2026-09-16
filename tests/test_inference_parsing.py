@@ -37,6 +37,7 @@ def test_parse_response_malformed_json_is_safe_default():
         "customer_name": "",
         "address": "",
         "pain_points": [],
+        "buying_temperature": "",
     }
 
 
@@ -293,3 +294,83 @@ def test_describe_best_offer_defaults_with_no_turns():
     summary = engine.describe_best_offer([])
     assert "$175 initial" in summary
     assert "24-month term" in summary
+
+
+# ── Buying temperature ─────────────────────────────────────────────────────────
+
+def test_parse_response_accepts_valid_buying_temperature():
+    engine = _engine()
+    parsed = engine._parse_response(
+        '{"type":"buying_signal","suggestion":"Let\'s get started.","buying_temperature":"hot"}',
+        "orig",
+    )
+    assert parsed["buying_temperature"] == "hot"
+
+
+def test_parse_response_rejects_invalid_buying_temperature():
+    engine = _engine()
+    parsed = engine._parse_response(
+        '{"type":"question","suggestion":"Sure.","buying_temperature":"lukewarm"}', "orig"
+    )
+    assert parsed["buying_temperature"] == ""
+
+
+def test_merge_notepad_buying_temperature_overwrites_only_on_valid_value():
+    engine = _engine()
+    notepad = {"customer_name": "", "address": "", "pain_points": [], "buying_temperature": ""}
+    out = engine.merge_notepad(notepad, {"buying_temperature": "hot"})
+    assert out["buying_temperature"] == "hot"
+
+    # Empty/invalid updates never regress a known temperature.
+    out = engine.merge_notepad(out, {"buying_temperature": ""})
+    assert out["buying_temperature"] == "hot"
+    out = engine.merge_notepad(out, {"buying_temperature": "bogus"})
+    assert out["buying_temperature"] == "hot"
+
+
+# ── Deterministic notepad-field triggers ───────────────────────────────────────
+
+def test_detect_triggered_fields_address_ask_then_given_captures_full_answer():
+    engine = _engine()
+    prior = [{"speaker": "salesperson", "transcript": "Great, what's your service address?"}]
+    out = engine.detect_triggered_fields(prior, "customer", "123 Main Street, Springfield, IL 62704")
+    assert out["address"] == "123 Main Street, Springfield, IL 62704"
+
+
+def test_detect_triggered_fields_standalone_address_pattern():
+    engine = _engine()
+    out = engine.detect_triggered_fields([], "customer", "you can reach me at 456 Oak Avenue anytime")
+    assert out["address"] == "456 Oak Avenue"
+
+
+def test_detect_triggered_fields_name_prefers_clean_standalone_match():
+    engine = _engine()
+    prior = [{"speaker": "salesperson", "transcript": "Can I get your name?"}]
+    out = engine.detect_triggered_fields(prior, "customer", "this is Sarah Jennings")
+    assert out["customer_name"] == "Sarah Jennings"
+
+
+def test_detect_triggered_fields_name_falls_back_to_full_answer_when_asked():
+    engine = _engine()
+    prior = [{"speaker": "salesperson", "transcript": "Can I get your name?"}]
+    out = engine.detect_triggered_fields(prior, "customer", "Sarah Jennings, nice to meet you")
+    assert out["customer_name"] == "Sarah Jennings, nice to meet you"
+
+
+def test_detect_triggered_fields_pain_point_ask_then_given():
+    engine = _engine()
+    prior = [{"speaker": "salesperson", "transcript": "What's holding you back from moving forward?"}]
+    out = engine.detect_triggered_fields(prior, "customer", "I just don't want a long contract")
+    assert out["pain_points"] == ["I just don't want a long contract"]
+
+
+def test_detect_triggered_fields_ignores_salesperson_turns():
+    engine = _engine()
+    out = engine.detect_triggered_fields([], "salesperson", "my name is Bob and my address is 1 Elm St")
+    assert out == {"customer_name": "", "address": "", "pain_points": []}
+
+
+def test_detect_triggered_fields_no_match_without_pattern_or_ask():
+    engine = _engine()
+    out = engine.detect_triggered_fields([], "customer", "I think that works for us")
+    assert out == {"customer_name": "", "address": "", "pain_points": []}

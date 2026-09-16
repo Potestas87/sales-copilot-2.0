@@ -154,7 +154,7 @@ async def websocket_endpoint(websocket: WebSocket):
     client_host = websocket.client.host
     log.info(f"Client connected: {client_host}")
     conversation_turns: list[dict] = []
-    notepad_state: dict = {"customer_name": "", "address": "", "pain_points": []}
+    notepad_state: dict = {"customer_name": "", "address": "", "pain_points": [], "buying_temperature": ""}
     latency_tracker = LatencyTracker(window_size=LATENCY_STATS_WINDOW)
 
     try:
@@ -200,6 +200,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     address=notepad_state["address"],
                     pain_points=notepad_state["pain_points"],
                     package_summary=suggestion_engine.describe_best_offer(conversation_turns),
+                    buying_temperature=notepad_state["buying_temperature"],
                 )
                 await websocket.send_text(response.model_dump_json())
                 continue
@@ -221,6 +222,19 @@ async def websocket_endpoint(websocket: WebSocket):
             if payload.speaker == "customer":
                 prior_turns = conversation_turns[:-1]
                 result = suggestion_engine.analyse(transcript, prior_turns)
+
+                # Deterministic regex/adjacency triggers back up the LLM's own
+                # extraction — a confident trigger match always wins so a
+                # name/address/pain point never goes uncaptured just because
+                # the model's single JSON call missed it this turn.
+                triggered = suggestion_engine.detect_triggered_fields(prior_turns, payload.speaker, transcript)
+                if triggered["customer_name"]:
+                    result["customer_name"] = triggered["customer_name"]
+                if triggered["address"]:
+                    result["address"] = triggered["address"]
+                if triggered["pain_points"]:
+                    result["pain_points"] = list(result.get("pain_points") or []) + triggered["pain_points"]
+
                 notepad_state = suggestion_engine.merge_notepad(notepad_state, result)
             else:
                 log.info("Skipping rebuttal inference for salesperson turn.")
@@ -252,6 +266,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 address=notepad_state["address"],
                 pain_points=notepad_state["pain_points"],
                 package_summary=package_summary,
+                buying_temperature=notepad_state["buying_temperature"],
             )
 
             await websocket.send_text(response.model_dump_json())

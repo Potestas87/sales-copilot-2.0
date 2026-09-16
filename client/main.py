@@ -66,6 +66,7 @@ def main():
             address         = data.get("address", ""),
             pain_points     = data.get("pain_points", []),
             package_summary = data.get("package_summary", ""),
+            buying_temperature = data.get("buying_temperature", ""),
         )
 
     ws_client = WebSocketClient(on_response=on_server_response)

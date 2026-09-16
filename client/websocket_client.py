@@ -278,6 +278,7 @@ class WebSocketClient:
                     "address": event.address,
                     "pain_points": event.pain_points,
                     "package_summary": event.package_summary,
+                    "buying_temperature": event.buying_temperature,
                 }
                 log.info(
                     "Received inference: speaker=%s intent=%s latency_ms=%.1f transcript='%s...'",

@@ -8,6 +8,8 @@ numpy>=1.24.0,<2.0.0       # Audio data is handled as numpy float32 arrays
 # ── Voice activity detection ──────────────────────────────────────────────────
 torch>=2.0.0,<3.0.0        # Required by silero-vad
 torchaudio>=2.0.0,<3.0.0   # Audio utilities used alongside silero-vad
+onnxruntime>=1.17.0,<2.0.0 # silero-vad's ONNX backend (torch.hub pulls it in at import time, not declared by silero-vad itself)
+packaging>=23.0,<27.0      # Imported directly by silero-vad's utils_vad.py
 
 # ── WebSocket client ──────────────────────────────────────────────────────────
 websockets>=12.0,<13.0.0   # Async WebSocket library for streaming to the server

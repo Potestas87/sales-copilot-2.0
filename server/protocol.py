@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 Speaker = Literal["customer", "salesperson"]
 Intent = Literal["objection", "question", "buying_signal", "none"]
+BuyingTemperature = Literal["hot", "warm", "cold", ""]
 
 
 class UtteranceMessage(BaseModel):
@@ -43,3 +44,4 @@ class InferenceMessage(BaseModel):
     address: str = ""
     pain_points: List[str] = Field(default_factory=list)
     package_summary: str = ""
+    buying_temperature: BuyingTemperature = ""

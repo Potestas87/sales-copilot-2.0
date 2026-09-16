@@ -65,8 +65,42 @@ objection_guidance:
       offer 18 months first, then 12 months if needed to close. Keep pricing
       context anchored while presenting each option.
 
+  contract:
+    summary: "I don't want to sign a contract / I don't want to be locked in"
+    angle: >
+      Don't argue that the contract doesn't matter — explain why it actually helps
+      them: it locks in today's promotional pricing so it can't rise mid-term, it
+      guarantees the every-two-month support visits are scheduled and staffed for
+      them, and it protects them from being deprioritized versus month-to-month
+      customers. Frame it as a commitment from NimbusCare to them, not just the
+      reverse. If resistance remains, use the term ladder (24 -> 18 -> 12 months)
+      to shorten the commitment rather than removing it.
+
+  trust:
+    summary: "Never heard of you / not sure I trust this company"
+    angle: >
+      Don't get defensive. Acknowledge it's fair to be cautious with an unfamiliar
+      company, then ground trust in specifics: the promotional pricing is
+      transparent ($175 initial, normally $350), support is on a predictable
+      every-two-month cadence, and terms step down (24/18/12 months) if they want
+      a shorter commitment while they get comfortable.
+
 buying_signal_guidance: >
   When the customer shows interest or asks about next steps, move toward closing
   with a clear recap of plan economics and term. Confirm: $175 initial (promo),
   $150 every-two-month support billing, and default 24-month term with 18/12-month
   options only as needed to close.
+
+# Cues the LLM should weigh when assessing overall buying temperature for the
+# call (see the "buying_temperature" instruction in prompts.py). These are
+# guidance, not an exhaustive list — the model should generalize from them.
+buying_temperature_guidance:
+  hot: >
+    Asking about next steps, start dates, signing, payment method, or saying
+    things like "let's do it" / "how do we get started" / "can we sign today".
+  warm: >
+    Engaged and asking clarifying questions, or has moved past earlier
+    hesitation without raising a new objection.
+  cold: >
+    Repeated objections without resolution, short/disengaged answers,
+    deflecting ("I'll think about it"), or no follow-up questions at all.

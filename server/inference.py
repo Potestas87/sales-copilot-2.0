@@ -37,6 +37,70 @@ from prompts import build_system_prompt, build_user_prompt
 load_dotenv()
 log = logging.getLogger("inference")
 
+# ── Deterministic notepad-field triggers ────────────────────────────────────
+# Backs up the LLM's own extraction (system prompt instruction #6) with regex
+# detection that doesn't depend on a single JSON call correctly noticing a
+# name/address buried alongside intent classification. Two detection paths:
+#   1. Standalone patterns — "my name is X", "123 Main St" — fire regardless
+#      of what the salesperson asked.
+#   2. Ask-then-given adjacency — if the salesperson's immediately preceding
+#      turn asked for a field ("what's your address?"), the customer's very
+#      next utterance is treated as that field's answer outright, even if it
+#      doesn't match a standalone pattern (e.g. an address Whisper transcribed
+#      without a recognizable street suffix).
+_NAME_PATTERNS = [
+    re.compile(r"\bmy name is\s+([A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+){0,2})", re.IGNORECASE),
+    re.compile(r"\bthis is\s+([A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+){0,2})\b", re.IGNORECASE),
+    re.compile(r"\bi'?m\s+([A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+){0,2})\s*(?:,|\.|$)", re.IGNORECASE),
+]
+
+_ADDRESS_PATTERN = re.compile(
+    r"\b\d{1,6}\s+[A-Za-z0-9.'-]+(?:\s+[A-Za-z0-9.'-]+){0,4}\s+"
+    r"(?:street|st|avenue|ave|road|rd|drive|dr|lane|ln|boulevard|blvd|"
+    r"way|court|ct|circle|cir|place|pl|terrace|ter|parkway|pkwy|highway|hwy)\b"
+    # Only an immediately-attached unit number is captured beyond the street
+    # itself — city/state/zip in free-floating speech is too unpunctuated to
+    # bound safely with regex. The ask-then-given trigger below handles the
+    # full address (including city/state/zip) by taking the whole answer
+    # verbatim once the salesperson has explicitly asked for it.
+    r"(?:\s+(?:apt|unit|suite|ste|#)\.?\s*[A-Za-z0-9-]+)?",
+    re.IGNORECASE,
+)
+
+_NAME_ASK_TRIGGER = re.compile(
+    r"what'?s your name|what is your name|who am i (?:speaking|talking) (?:with|to)|"
+    r"can i get your name|can i have your name",
+    re.IGNORECASE,
+)
+_ADDRESS_ASK_TRIGGER = re.compile(
+    r"what'?s your (?:service |property |home )?address|"
+    r"what is your (?:service |property |home )?address|"
+    r"where (?:do you live|is the (?:service|property) address)|"
+    r"can i get your address|can i have your address",
+    re.IGNORECASE,
+)
+_PAIN_POINT_ASK_TRIGGER = re.compile(
+    r"what'?s (?:your )?(?:biggest )?concern|what is (?:your )?(?:biggest )?concern|"
+    r"what'?s holding you back|what is holding you back|"
+    r"what are you worried about|what'?s stopping you|what is stopping you",
+    re.IGNORECASE,
+)
+
+
+def _detect_name_from_text(text: str) -> str:
+    for pattern in _NAME_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
+def _detect_address_from_text(text: str) -> str:
+    match = _ADDRESS_PATTERN.search(text)
+    if match:
+        return match.group(0).strip().rstrip(".,")
+    return ""
+
 
 class SuggestionEngine:
     """
@@ -133,6 +197,7 @@ class SuggestionEngine:
         guardrail_result["customer_name"] = parsed.get("customer_name", "")
         guardrail_result["address"] = parsed.get("address", "")
         guardrail_result["pain_points"] = parsed.get("pain_points", [])
+        guardrail_result["buying_temperature"] = parsed.get("buying_temperature", "")
         return guardrail_result
 
     def describe_best_offer(self, conversation_turns: list[dict]) -> str:
@@ -151,14 +216,15 @@ class SuggestionEngine:
         """
         Accumulate extracted deal details into the running per-session notepad.
 
-        Name/address only overwrite when the new value is non-empty (never
-        regress a known value back to blank); pain points append+dedup,
-        capped so the list can't grow unbounded over a long call.
+        Name/address/temperature only overwrite when the new value is
+        non-empty (never regress a known value back to blank); pain points
+        append+dedup, capped so the list can't grow unbounded over a long call.
         """
         notepad = {
             "customer_name": notepad.get("customer_name", ""),
             "address": notepad.get("address", ""),
             "pain_points": list(notepad.get("pain_points", [])),
+            "buying_temperature": notepad.get("buying_temperature", ""),
         }
 
         new_name = str(updates.get("customer_name", "") or "").strip()
@@ -169,6 +235,10 @@ class SuggestionEngine:
         if new_address:
             notepad["address"] = new_address
 
+        new_temperature = str(updates.get("buying_temperature", "") or "").strip().lower()
+        if new_temperature in {"hot", "warm", "cold"}:
+            notepad["buying_temperature"] = new_temperature
+
         for point in updates.get("pain_points", []) or []:
             point = str(point or "").strip()
             if point and point not in notepad["pain_points"]:
@@ -177,6 +247,44 @@ class SuggestionEngine:
             notepad["pain_points"] = notepad["pain_points"][-6:]
 
         return notepad
+
+    @staticmethod
+    def detect_triggered_fields(prior_turns: list[dict], speaker: str, transcript: str) -> dict:
+        """
+        Deterministic backup for the notepad fields the LLM extraction can miss.
+
+        Runs independently of the classification model so a name/address never
+        goes uncaptured just because the model's single JSON call didn't
+        surface it. Only fires on customer turns — these fields describe the
+        customer, and the customer's own turn is the source of truth for them.
+        """
+        triggered = {"customer_name": "", "address": "", "pain_points": []}
+        text = (transcript or "").strip()
+        if speaker != "customer" or not text:
+            return triggered
+
+        # Names are short and well-patterned ("my name is X" / "this is X"),
+        # so the standalone pattern wins when it matches — it's cleaner than
+        # the whole reply. Addresses are freer-form and the standalone regex
+        # deliberately only grabs the street (not city/state/zip), so there
+        # ask-then-given's full utterance wins instead.
+        triggered["customer_name"] = _detect_name_from_text(text)
+        standalone_address = _detect_address_from_text(text)
+
+        last_turn = prior_turns[-1] if prior_turns else None
+        if last_turn and last_turn.get("speaker") == "salesperson":
+            asked = str(last_turn.get("transcript", "") or "")
+            if not triggered["customer_name"] and _NAME_ASK_TRIGGER.search(asked):
+                triggered["customer_name"] = text[:80]
+            if _ADDRESS_ASK_TRIGGER.search(asked):
+                triggered["address"] = text[:80]
+            if _PAIN_POINT_ASK_TRIGGER.search(asked):
+                triggered["pain_points"] = [text[:80]]
+
+        if not triggered["address"]:
+            triggered["address"] = standalone_address
+
+        return triggered
 
     @staticmethod
     def _detect_offer_from_text(text: str) -> dict:
@@ -540,6 +648,10 @@ class SuggestionEngine:
                 raw_pain_points = []
             pain_points = [str(p or "").strip()[:80] for p in raw_pain_points if str(p or "").strip()][:3]
 
+            buying_temperature = str(parsed.get("buying_temperature", "") or "").strip().lower()
+            if buying_temperature not in {"hot", "warm", "cold"}:
+                buying_temperature = ""
+
             return {
                 "type":       suggestion_type,
                 "suggestion": suggestion_text,
@@ -548,6 +660,7 @@ class SuggestionEngine:
                 "customer_name": customer_name,
                 "address": address,
                 "pain_points": pain_points,
+                "buying_temperature": buying_temperature,
             }
 
         except (json.JSONDecodeError, ValueError) as e:
@@ -560,4 +673,5 @@ class SuggestionEngine:
                 "customer_name": "",
                 "address": "",
                 "pain_points": [],
+                "buying_temperature": "",
             }
