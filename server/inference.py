@@ -185,6 +185,60 @@ def _detect_pain_points_from_text(text: str) -> list[str]:
     return found[:3]
 
 
+# ── Buying temperature (deterministic, context-aware) ───────────────────────
+# Asking the LLM for "buying_temperature" as one more field in the same JSON
+# call that already does intent classification + suggestion + extraction was
+# unreliable in practice — it rarely came back at all. Rather than trust a
+# secondary field bolted onto an overloaded call, this reuses the "type"
+# classification (objection/question/buying_signal) the model already
+# produces every customer turn — a much simpler, already-proven-reliable
+# signal — and reasons over a short rolling window of it, so the reading
+# reacts to the shape of the conversation rather than a single guess.
+_HOT_CUE_PATTERN = re.compile(
+    r"let'?s do (?:it|this)|sounds good,? let'?s|how do (?:we|i) get started|"
+    r"sign (?:me |us )?up|book (?:it|the appointment)|schedule (?:it|the)|"
+    r"when can you start|can you start (?:today|this week)|"
+    r"what'?s the next step|i'?m (?:ready|in)|let'?s move forward|"
+    r"go ahead and|yes,? let'?s|works for me,? let'?s|let'?s get this (?:done|started)",
+    re.IGNORECASE,
+)
+_COLD_CUE_PATTERN = re.compile(
+    r"i'?ll think about it|not interested|no thanks|not right now|"
+    r"maybe (?:later|another time)|i need (?:some )?time|"
+    r"i'?m not sure (?:about|this)|let me (?:think|talk it over)|"
+    r"not (?:ready|convinced)|don'?t think (?:so|this is for)",
+    re.IGNORECASE,
+)
+
+
+def _detect_buying_temperature(transcript: str, intent_history: list[str]) -> str:
+    """
+    Reactive hot/warm/cold read from explicit closing/deferral phrases in
+    this utterance, falling back to the shape of the last few customer-turn
+    intents. `intent_history` should already include this turn's own intent
+    (the caller appends before calling) so a single strong signal is enough
+    to move the reading immediately rather than waiting on future turns.
+    """
+    t = (transcript or "").lower()
+    if _HOT_CUE_PATTERN.search(t):
+        return "hot"
+    if _COLD_CUE_PATTERN.search(t):
+        return "cold"
+
+    recent = intent_history[-3:]
+    if not recent:
+        return ""
+
+    buying_signals = recent.count("buying_signal")
+    objections = recent.count("objection")
+
+    if buying_signals >= 2 or recent[-1] == "buying_signal":
+        return "hot"
+    if objections >= 2 and "buying_signal" not in recent:
+        return "cold"
+    return "warm"
+
+
 class SuggestionEngine:
     """
     Loads Mistral 7B and generates sales suggestions from customer utterances.
@@ -373,6 +427,11 @@ class SuggestionEngine:
 
         triggered["pain_points"] = triggered["pain_points"][:3]
         return triggered
+
+    @staticmethod
+    def detect_buying_temperature(transcript: str, intent_history: list[str]) -> str:
+        """See module-level `_detect_buying_temperature` docstring."""
+        return _detect_buying_temperature(transcript, intent_history)
 
     @staticmethod
     def _detect_offer_from_text(text: str) -> dict:

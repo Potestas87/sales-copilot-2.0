@@ -155,6 +155,9 @@ async def websocket_endpoint(websocket: WebSocket):
     log.info(f"Client connected: {client_host}")
     conversation_turns: list[dict] = []
     notepad_state: dict = {"customer_name": "", "address": "", "pain_points": [], "buying_temperature": ""}
+    # Rolling window of recent customer-turn intents, used to derive buying
+    # temperature deterministically — see detect_buying_temperature().
+    customer_intent_history: list[str] = []
     latency_tracker = LatencyTracker(window_size=LATENCY_STATS_WINDOW)
 
     try:
@@ -234,6 +237,19 @@ async def websocket_endpoint(websocket: WebSocket):
                     result["address"] = triggered["address"]
                 if triggered["pain_points"]:
                     result["pain_points"] = list(result.get("pain_points") or []) + triggered["pain_points"]
+
+                # Buying temperature: the LLM's own attempt at this field
+                # (bolted onto the same overloaded JSON call) was unreliable,
+                # so it's derived deterministically instead — from explicit
+                # closing/deferral phrases in this utterance, or the shape of
+                # the last few customer-turn intents, which is a signal we
+                # already trust since it drives the on-screen suggestion badge.
+                customer_intent_history.append(result.get("type", "none"))
+                if len(customer_intent_history) > 6:
+                    customer_intent_history = customer_intent_history[-6:]
+                result["buying_temperature"] = suggestion_engine.detect_buying_temperature(
+                    transcript, customer_intent_history
+                )
 
                 notepad_state = suggestion_engine.merge_notepad(notepad_state, result)
             else:

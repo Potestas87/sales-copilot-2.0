@@ -465,3 +465,47 @@ def test_pricing_override_uses_quarterly_cadence_when_active():
     result = {"type": "question", "suggestion": "", "reasoning_short": "", "confidence": 0.5}
     out = engine._apply_business_rules(result, "How much does that cost?", progress)
     assert "quarterly" in out["suggestion"].lower()
+
+
+# ── Deterministic buying temperature ────────────────────────────────────────────
+
+def test_buying_temperature_hot_cue_overrides_history():
+    engine = _engine()
+    out = engine.detect_buying_temperature("Ok let's do it, how do we get started?", ["objection", "objection"])
+    assert out == "hot"
+
+
+def test_buying_temperature_cold_cue_overrides_history():
+    engine = _engine()
+    out = engine.detect_buying_temperature("I'll think about it and get back to you", ["buying_signal"])
+    assert out == "cold"
+
+
+def test_buying_temperature_hot_from_repeated_buying_signal_intents():
+    engine = _engine()
+    out = engine.detect_buying_temperature("What's included in that?", ["question", "buying_signal", "buying_signal"])
+    assert out == "hot"
+
+
+def test_buying_temperature_hot_when_latest_turn_is_buying_signal():
+    engine = _engine()
+    out = engine.detect_buying_temperature("Sounds good", ["objection", "question", "buying_signal"])
+    assert out == "hot"
+
+
+def test_buying_temperature_cold_from_repeated_objections_without_buying_signal():
+    engine = _engine()
+    out = engine.detect_buying_temperature("I'm still not sure about this", ["objection", "objection", "question"])
+    assert out == "cold"
+
+
+def test_buying_temperature_warm_default_with_mixed_signal():
+    engine = _engine()
+    out = engine.detect_buying_temperature("How does onboarding work?", ["objection", "buying_signal", "question"])
+    assert out == "warm"
+
+
+def test_buying_temperature_empty_with_no_history():
+    engine = _engine()
+    out = engine.detect_buying_temperature("hello", [])
+    assert out == ""

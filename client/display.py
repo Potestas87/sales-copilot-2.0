@@ -25,12 +25,14 @@ TYPE_COLOURS = {
     "none": {"bg": "#424242", "fg": "#aaaaaa", "label": "LISTENING"},
 }
 
-# Colors for the buying-temperature indicator
+# Color-coded badge (background + text) for the buying-temperature
+# indicator — styled like TYPE_COLOURS above so it reads as a filled pill,
+# not just tinted text, for a quick glance during a live call.
 TEMPERATURE_COLOURS = {
-    "hot": {"fg": "#ff6b4a", "label": "\U0001F525 HOT"},
-    "warm": {"fg": "#e6c266", "label": "WARM"},
-    "cold": {"fg": "#6fa8dc", "label": "COLD"},
-    "": {"fg": "#707070", "label": "Buying temp: —"},
+    "hot": {"bg": "#ff4444", "fg": "white", "label": "\U0001F525 HOT"},
+    "warm": {"bg": "#e6a23c", "fg": "white", "label": "WARM"},
+    "cold": {"bg": "#2f6fa8", "fg": "white", "label": "COLD"},
+    "": {"bg": "#2e2e2e", "fg": "#888888", "label": "Buying temp: —"},
 }
 
 WINDOW_WIDTH = 520
@@ -139,11 +141,13 @@ class SuggestionDisplay:
             self._root,
             text=TEMPERATURE_COLOURS[""]["label"],
             font=("Helvetica Neue", 9, "bold"),
-            bg="#1e1e1e",
+            bg=TEMPERATURE_COLOURS[""]["bg"],
             fg=TEMPERATURE_COLOURS[""]["fg"],
+            padx=8,
+            pady=2,
             anchor="w",
         )
-        self._temp_label.pack(fill="x", padx=12, pady=(0, 2))
+        self._temp_label.pack(fill="x", padx=10, pady=(0, 4))
 
         self._suggestion_label = tk.Label(
             self._root,
@@ -315,7 +319,7 @@ class SuggestionDisplay:
 
         temp = self._notepad.get("buying_temperature", "")
         temp_colours = TEMPERATURE_COLOURS.get(temp, TEMPERATURE_COLOURS[""])
-        self._temp_label.config(text=temp_colours["label"], fg=temp_colours["fg"])
+        self._temp_label.config(text=temp_colours["label"], bg=temp_colours["bg"], fg=temp_colours["fg"])
 
         if self._current_suggestion:
             self._suggestion_label.config(
