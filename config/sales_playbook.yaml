@@ -52,6 +52,56 @@ service_explanation: >
   an identical routine — the plan adapts to what's actually happening at the
   property, not a fixed script.
 
+# Factual pest-control knowledge the model can draw on to answer informational
+# "question"-type utterances accurately (e.g. "why do we suddenly have ants",
+# "is it safe for my garden", "do you handle termites") instead of vaguely or
+# by defaulting to pricing/objection talk. This is knowledge, not a sales
+# angle — use it to actually answer what was asked.
+pest_knowledge_base:
+  why_pests_invade: >
+    Usually seeking food, water, or shelter — triggered by weather changes,
+    nearby construction, foundation moisture, or accessible food sources.
+    Common entry points: gaps around utility lines, windows, door thresholds.
+  ants: >
+    Visible ants follow a scent trail from a colony; spot-spraying doesn't
+    remove the colony, a perimeter barrier does. Carpenter ants (nest in
+    moist/rotting wood) are a separate, more damage-prone concern.
+  spiders: >
+    Usually a secondary problem — they follow their food source (other
+    insects), so reducing the general insect population plus treating webs
+    and entry points is what controls them. Most common species aren't
+    medically dangerous.
+  rodents: >
+    Mice fit through gaps as small as a quarter-inch, rats a half-inch —
+    sealing entry points matters as much as trapping. Treated as higher
+    urgency than insects due to disease risk and gnaw damage to wiring.
+  roaches: >
+    Drawn to moisture/warmth, most common in kitchens and bathrooms; one
+    visible roach usually means more are hiding. Baiting plus perimeter work
+    outperforms surface spraying, which can scatter rather than eliminate them.
+  wasps: >
+    Nest removal is safest early morning/evening when they're least active —
+    a technician job, not DIY. A stray wasp doesn't always mean a nest
+    on-property.
+  termites_and_bed_bugs: >
+    IMPORTANT: NOT covered by the standard plan — termites need a separate
+    inspection and dedicated treatment (baiting/termiticide barriers), bed
+    bugs need targeted heat/chemical treatment. Be honest about this and
+    offer to connect them with that specific service; never imply the
+    standard plan covers it.
+  after_treatment_expectations: >
+    Seeing MORE activity in the first day or two is normal — the product
+    flushes pests out before killing them, it's not a sign of failure. Full
+    effect: a few days to two weeks. The barrier stays active for weeks,
+    which is why the recurring visit cadence exists.
+  safety_and_timing: >
+    EPA-registered products applied per label guidelines. Typical re-entry
+    time for pets/kids is 30-60 minutes. No need to leave the home for a
+    standard treatment.
+  prevention_tips: >
+    Seal foundation/utility gaps, keep firewood/mulch off the house exterior,
+    fix standing water, keep food sealed, trim vegetation off the exterior.
+
 # Categories the model should watch for when extracting "pain_points" from
 # the customer's own words — the LLM instruction in prompts.py references
 # this list directly. Not exhaustive; the model should generalize.

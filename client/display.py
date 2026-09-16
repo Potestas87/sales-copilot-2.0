@@ -17,26 +17,37 @@ import time
 import tkinter as tk
 from typing import Optional
 
+# ── Palette ──────────────────────────────────────────────────────────────────
+BG = "#121317"
+CARD_BG = "#1b1d23"
+CARD_BORDER = "#2c2f37"
+DIVIDER = "#26282e"
+TEXT_PRIMARY = "#f5f6f8"
+TEXT_SECONDARY = "#9aa0ab"
+TEXT_MUTED = "#6c7078"
+ACCENT = "#6d93ff"
+
+FONT_FAMILY = "Helvetica Neue"
+
 # Color scheme for each suggestion type
 TYPE_COLOURS = {
-    "objection": {"bg": "#ff4444", "fg": "white", "label": "ACTION NOW: OBJECTION"},
-    "question": {"bg": "#2196F3", "fg": "white", "label": "ACTION NOW: QUESTION"},
-    "buying_signal": {"bg": "#4CAF50", "fg": "white", "label": "ACTION NOW: BUYING SIGNAL"},
-    "none": {"bg": "#424242", "fg": "#aaaaaa", "label": "LISTENING"},
+    "objection": {"bg": "#e5484d", "fg": "white", "label": "ACTION NOW · OBJECTION"},
+    "question": {"bg": "#3b82f6", "fg": "white", "label": "ACTION NOW · QUESTION"},
+    "buying_signal": {"bg": "#2fb344", "fg": "white", "label": "ACTION NOW · BUYING SIGNAL"},
+    "none": {"bg": "#33363d", "fg": "#b8bcc4", "label": "LISTENING"},
 }
 
 # Color-coded badge (background + text) for the buying-temperature
 # indicator — styled like TYPE_COLOURS above so it reads as a filled pill,
 # not just tinted text, for a quick glance during a live call.
 TEMPERATURE_COLOURS = {
-    "hot": {"bg": "#ff4444", "fg": "white", "label": "\U0001F525 HOT"},
-    "warm": {"bg": "#e6a23c", "fg": "white", "label": "WARM"},
-    "cold": {"bg": "#2f6fa8", "fg": "white", "label": "COLD"},
-    "": {"bg": "#2e2e2e", "fg": "#888888", "label": "Buying temp: —"},
+    "hot": {"bg": "#e5484d", "fg": "white", "label": "\U0001F525  HOT"},
+    "warm": {"bg": "#d99a3d", "fg": "white", "label": "WARM"},
+    "cold": {"bg": "#3d72b4", "fg": "white", "label": "COLD"},
+    "": {"bg": CARD_BG, "fg": TEXT_MUTED, "label": "Buying temp: —"},
 }
 
-WINDOW_WIDTH = 520
-WINDOW_HEIGHT = 440
+WINDOW_WIDTH = 560
 WINDOW_X = 20
 WINDOW_Y = 20
 STALE_SUGGESTION_SECONDS = float(os.getenv("STALE_SUGGESTION_SECONDS", 12))
@@ -120,108 +131,167 @@ class SuggestionDisplay:
     def _build_window(self) -> None:
         self._root = tk.Tk()
         self._root.title("Sales Copilot")
-        self._root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}+{WINDOW_X}+{WINDOW_Y}")
+        # Height is intentionally not fixed — the notepad (pain points in
+        # particular) can grow across a call, and a hardcoded height either
+        # clips that content or leaves a dead gap when it's short. Position
+        # only; width is pinned via minsize + the wraplength values below,
+        # height self-sizes to whatever's actually packed.
+        self._root.geometry(f"+{WINDOW_X}+{WINDOW_Y}")
+        self._root.minsize(WINDOW_WIDTH, 1)
         self._root.attributes("-topmost", True)
-        self._root.attributes("-alpha", 0.94)
-        self._root.configure(bg="#1e1e1e")
+        self._root.attributes("-alpha", 0.96)
+        self._root.configure(bg=BG)
 
+        # ── Header ──────────────────────────────────────────────────────────
+        header = tk.Frame(self._root, bg=BG)
+        header.pack(fill="x", padx=14, pady=(12, 8))
+
+        tk.Label(
+            header,
+            text="●",
+            font=(FONT_FAMILY, 9),
+            bg=BG,
+            fg=ACCENT,
+        ).pack(side="left")
+
+        tk.Label(
+            header,
+            text="  SALES COPILOT",
+            font=(FONT_FAMILY, 11, "bold"),
+            bg=BG,
+            fg=ACCENT,
+        ).pack(side="left")
+
+        # ── Status badges ───────────────────────────────────────────────────
         self._badge = tk.Label(
             self._root,
             text="LISTENING",
-            font=("Helvetica Neue", 10, "bold"),
-            bg="#424242",
-            fg="white",
-            padx=8,
-            pady=4,
+            font=(FONT_FAMILY, 11, "bold"),
+            bg=TYPE_COLOURS["none"]["bg"],
+            fg=TYPE_COLOURS["none"]["fg"],
+            padx=10,
+            pady=6,
             anchor="w",
         )
-        self._badge.pack(fill="x", padx=10, pady=(10, 4))
+        self._badge.pack(fill="x", padx=14, pady=(0, 3))
 
         self._temp_label = tk.Label(
             self._root,
             text=TEMPERATURE_COLOURS[""]["label"],
-            font=("Helvetica Neue", 9, "bold"),
+            font=(FONT_FAMILY, 9, "bold"),
             bg=TEMPERATURE_COLOURS[""]["bg"],
             fg=TEMPERATURE_COLOURS[""]["fg"],
-            padx=8,
-            pady=2,
+            padx=10,
+            pady=3,
             anchor="w",
         )
-        self._temp_label.pack(fill="x", padx=10, pady=(0, 4))
+        self._temp_label.pack(fill="x", padx=14, pady=(0, 10))
+
+        # ── Suggestion card ─────────────────────────────────────────────────
+        suggestion_card = tk.Frame(self._root, bg=CARD_BG, highlightbackground=CARD_BORDER, highlightthickness=1)
+        suggestion_card.pack(fill="x", padx=14, pady=(0, 10))
 
         self._suggestion_label = tk.Label(
-            self._root,
+            suggestion_card,
             text="Waiting for customer speech...",
-            font=("Helvetica Neue", 13),
-            bg="#1e1e1e",
-            fg="#ffffff",
-            wraplength=WINDOW_WIDTH - 24,
+            font=(FONT_FAMILY, 14),
+            bg=CARD_BG,
+            fg=TEXT_PRIMARY,
+            wraplength=WINDOW_WIDTH - 56,
             justify="left",
             anchor="nw",
         )
-        self._suggestion_label.pack(fill="x", padx=12, pady=(2, 4))
+        self._suggestion_label.pack(fill="x", padx=12, pady=(12, 6))
 
         self._meta_label = tk.Label(
-            self._root,
+            suggestion_card,
             text="",
-            font=("Helvetica Neue", 10),
-            bg="#1e1e1e",
-            fg="#9e9e9e",
-            wraplength=WINDOW_WIDTH - 24,
+            font=(FONT_FAMILY, 10),
+            bg=CARD_BG,
+            fg=TEXT_SECONDARY,
+            wraplength=WINDOW_WIDTH - 56,
             justify="left",
             anchor="nw",
         )
-        self._meta_label.pack(fill="x", padx=12, pady=(0, 4))
+        self._meta_label.pack(fill="x", padx=12, pady=(0, 12))
+
+        # ── Live transcript ─────────────────────────────────────────────────
+        transcript_frame = tk.Frame(self._root, bg=BG)
+        transcript_frame.pack(fill="x", padx=14, pady=(0, 10))
 
         self._customer_label = tk.Label(
-            self._root,
-            text="Customer: (waiting)",
-            font=("Helvetica Neue", 10),
-            bg="#1e1e1e",
-            fg="#d0d0d0",
-            wraplength=WINDOW_WIDTH - 24,
+            transcript_frame,
+            text="Customer:  (waiting)",
+            font=(FONT_FAMILY, 10),
+            bg=BG,
+            fg=TEXT_PRIMARY,
+            wraplength=WINDOW_WIDTH - 28,
             justify="left",
             anchor="nw",
         )
-        self._customer_label.pack(fill="x", padx=12, pady=(4, 2))
+        self._customer_label.pack(fill="x", pady=(0, 3))
 
         self._sales_label = tk.Label(
-            self._root,
-            text="You: (waiting)",
-            font=("Helvetica Neue", 10),
-            bg="#1e1e1e",
-            fg="#9a9a9a",
-            wraplength=WINDOW_WIDTH - 24,
+            transcript_frame,
+            text="You:  (waiting)",
+            font=(FONT_FAMILY, 10),
+            bg=BG,
+            fg=TEXT_MUTED,
+            wraplength=WINDOW_WIDTH - 28,
             justify="left",
             anchor="nw",
         )
-        self._sales_label.pack(fill="x", padx=12, pady=(4, 8))
+        self._sales_label.pack(fill="x")
 
-        # ── Persistent deal notepad ────────────────────────────────────────
-        notepad_frame = tk.Frame(self._root, bg="#262626", highlightbackground="#3a3a3a", highlightthickness=1)
-        notepad_frame.pack(fill="x", padx=12, pady=(0, 10))
+        # ── Persistent deal notepad ─────────────────────────────────────────
+        notepad_frame = tk.Frame(self._root, bg=CARD_BG, highlightbackground=CARD_BORDER, highlightthickness=1)
+        notepad_frame.pack(fill="x", padx=14, pady=(0, 14))
 
         notepad_title = tk.Label(
             notepad_frame,
-            text="DEAL NOTEPAD",
-            font=("Helvetica Neue", 9, "bold"),
-            bg="#262626",
-            fg="#8ab4f8",
+            text="\U0001F4CB  DEAL NOTEPAD",
+            font=(FONT_FAMILY, 10, "bold"),
+            bg=CARD_BG,
+            fg=ACCENT,
             anchor="w",
         )
-        notepad_title.pack(fill="x", padx=8, pady=(6, 2))
+        notepad_title.pack(fill="x", padx=12, pady=(10, 6))
 
-        self._notepad_label = tk.Label(
-            notepad_frame,
-            text="Name: —\nAddress: —\nPackage: —\nPain points: —",
-            font=("Helvetica Neue", 10),
-            bg="#262626",
-            fg="#d0d0d0",
-            wraplength=WINDOW_WIDTH - 40,
+        divider = tk.Frame(notepad_frame, bg=DIVIDER, height=1)
+        divider.pack(fill="x", padx=12, pady=(0, 8))
+
+        self._notepad_name_value = self._build_notepad_row(notepad_frame, "NAME")
+        self._notepad_address_value = self._build_notepad_row(notepad_frame, "ADDRESS")
+        self._notepad_package_value = self._build_notepad_row(notepad_frame, "PACKAGE")
+        self._notepad_pain_value = self._build_notepad_row(notepad_frame, "PAIN POINTS", pady_bottom=10)
+
+    def _build_notepad_row(self, parent: tk.Frame, field_label: str, pady_bottom: int = 4) -> tk.Label:
+        """Build a "LABEL   value" row and return the value Label for later updates."""
+        row = tk.Frame(parent, bg=CARD_BG)
+        row.pack(fill="x", padx=12, pady=(0, pady_bottom))
+
+        tk.Label(
+            row,
+            text=field_label,
+            font=(FONT_FAMILY, 8, "bold"),
+            bg=CARD_BG,
+            fg=TEXT_MUTED,
+            width=11,
+            anchor="nw",
+        ).pack(side="left", anchor="n")
+
+        value_label = tk.Label(
+            row,
+            text="—",
+            font=(FONT_FAMILY, 10),
+            bg=CARD_BG,
+            fg=TEXT_PRIMARY,
+            wraplength=WINDOW_WIDTH - 130,
             justify="left",
             anchor="nw",
         )
-        self._notepad_label.pack(fill="x", padx=8, pady=(0, 8))
+        value_label.pack(side="left", fill="x", expand=True)
+        return value_label
 
     def _poll_updates(self) -> None:
         try:
@@ -324,41 +394,35 @@ class SuggestionDisplay:
         if self._current_suggestion:
             self._suggestion_label.config(
                 text=self._clip_text(self._current_suggestion, 220),
-                fg="#ffffff",
+                fg=TEXT_PRIMARY,
             )
             confidence_pct = int(round(self._current_confidence * 100))
             latency_label, latency_color = self._latency_visual(self._current_latency_ms)
-            meta = f"Confidence: {confidence_pct}% | Latency: {self._current_latency_ms:.0f}ms ({latency_label})"
+            meta = f"Confidence {confidence_pct}%  ·  Latency {self._current_latency_ms:.0f}ms ({latency_label})"
             if self._current_reasoning_short:
-                meta = f"{meta} | {self._current_reasoning_short}"
+                meta = f"{meta}\n{self._current_reasoning_short}"
             self._meta_label.config(text=meta, fg=latency_color)
         else:
             self._suggestion_label.config(
                 text="No customer action needed right now.",
-                fg="#666666",
+                fg=TEXT_MUTED,
             )
-            self._meta_label.config(text="Listening for next customer turn...", fg="#707070")
+            self._meta_label.config(text="Listening for next customer turn...", fg=TEXT_MUTED)
 
         customer_text = self._latest_customer_text or "(waiting)"
         sales_text = self._latest_sales_text or "(waiting)"
-        self._customer_label.config(text=f"Customer: {customer_text}")
-        self._sales_label.config(text=f"You: {sales_text}")
+        self._customer_label.config(text=f"Customer:  {customer_text}")
+        self._sales_label.config(text=f"You:  {sales_text}")
 
         self._render_notepad()
 
     def _render_notepad(self) -> None:
-        name = self._notepad["customer_name"] or "—"
-        address = self._notepad["address"] or "—"
-        package = self._notepad["package_summary"] or "—"
-        pain_points = ", ".join(self._notepad["pain_points"]) or "—"
+        pain_points = ", ".join(self._notepad["pain_points"])
 
-        text = (
-            f"Name: {name}\n"
-            f"Address: {address}\n"
-            f"Package: {package}\n"
-            f"Pain points: {self._clip_text(pain_points, 160)}"
-        )
-        self._notepad_label.config(text=text)
+        self._notepad_name_value.config(text=self._notepad["customer_name"] or "—")
+        self._notepad_address_value.config(text=self._notepad["address"] or "—")
+        self._notepad_package_value.config(text=self._notepad["package_summary"] or "—")
+        self._notepad_pain_value.config(text=self._clip_text(pain_points, 160) or "—")
 
     @staticmethod
     def _clip_text(text: str, max_len: int) -> str:
@@ -369,10 +433,10 @@ class SuggestionDisplay:
     @staticmethod
     def _latency_visual(latency_ms: float) -> tuple[str, str]:
         if latency_ms <= LATENCY_GOOD_MS:
-            return "good", "#7bc67b"
+            return "good", "#6fcf7d"
         if latency_ms <= LATENCY_WARN_MS:
-            return "watch", "#e6c266"
-        return "slow", "#e57373"
+            return "watch", "#d9a441"
+        return "slow", "#e5646a"
 
 
 if __name__ == "__main__":

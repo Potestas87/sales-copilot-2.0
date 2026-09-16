@@ -69,6 +69,7 @@ def build_system_prompt() -> str:
     answer_style_guide  = playbook.get("answer_style_guidance", "")
     pain_point_categories = playbook.get("pain_point_categories", {})
     service_explanation = playbook.get("service_explanation", "")
+    knowledge_base = playbook.get("pest_knowledge_base", {})
 
     value_prop_text = ""
     if value_props:
@@ -119,6 +120,21 @@ def build_system_prompt() -> str:
     if service_explanation:
         service_explanation_text = f"What the service actually involves (use this to explain the service itself, not just answer objections):\n  {service_explanation.strip()}"
 
+    knowledge_base_text = ""
+    if knowledge_base:
+        entries = []
+        for key, fact in knowledge_base.items():
+            fact = str(fact or "").strip()
+            if fact:
+                label = key.replace("_", " ")
+                entries.append(f"  {label}: {fact}")
+        if entries:
+            knowledge_base_text = (
+                "Pest control knowledge base (use this to answer factual/informational "
+                "questions accurately — this is real knowledge, not a sales script):\n"
+                + "\n".join(entries)
+            )
+
     system_prompt = f"""You are a real-time sales copilot assistant. Your job is to analyse what a customer
 just said on a sales call and help the salesperson respond effectively.
 
@@ -135,6 +151,8 @@ Product: {product_name}
 {pain_point_text}
 
 {service_explanation_text}
+
+{knowledge_base_text}
 
 {answer_style_text}
 
@@ -158,12 +176,18 @@ Your task:
    response the salesperson can use. Keep it under 3 sentences. Don't be robotic.
    Use the conversation context to avoid repeating what the salesperson already said.
    Add incremental value (new framing, evidence, or a concise next-step question).
-   Draw from the objection handling playbook, value propositions, and service
-   explanation above — not just pricing. If the customer is asking what the
-   service actually involves, or moving the sale forward means reassuring them
-   about how the service works or how it addresses a pest/location they've
-   already mentioned, use the service explanation and their specific pain
-   points for that, not a pricing recap.
+   Draw from the objection handling playbook, value propositions, service
+   explanation, and pest control knowledge base above — not just pricing.
+   If the customer is asking what the service actually involves, or moving the
+   sale forward means reassuring them about how the service works or how it
+   addresses a pest/location they've already mentioned, use the service
+   explanation and their specific pain points for that, not a pricing recap.
+   If the customer asks a factual/informational question about pests or
+   treatment (why a pest showed up, what to expect after treatment, whether
+   it's safe, whether a specific pest like termites or bed bugs is covered),
+   answer it accurately using the pest control knowledge base — don't guess
+   or make up facts, and be honest when something (like termites or bed bugs)
+   falls outside the standard plan rather than implying it's covered.
    Answer the substance of what the customer actually raised FIRST — e.g. for a
    treatment-frequency objection, explain why the cadence matters before you
    mention pricing or term options. Don't default to a pricing recap unless

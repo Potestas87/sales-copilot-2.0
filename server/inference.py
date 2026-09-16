@@ -333,17 +333,30 @@ class SuggestionEngine:
 
         log.info(f"Loading LLM from '{self.model_name}'...")
 
+        self._max_tokens    = max_tokens
+        self._system_prompt = build_system_prompt()
+
         # n_gpu_layers=-1 offloads all layers to GPU — maximum speed.
-        # n_ctx=2048 is the context window — enough for a sales conversation history.
+        # n_ctx must cover system prompt + conversation history + max_tokens
+        # generation budget, every single call. The playbook-driven system
+        # prompt (objection guidance, knowledge base, etc.) has grown with
+        # the playbook and now runs several thousand tokens on its own —
+        # 2048 was already too tight for it alone, let alone with room left
+        # for conversation turns. Sized here off the actual prompt plus a
+        # healthy fixed margin so playbook growth doesn't silently break
+        # every inference call again; KV cache cost at this size is modest
+        # on a 24GB GPU next to Whisper + a 4-bit 7B model.
         # verbose=False suppresses llama.cpp's internal logging noise.
+        system_prompt_token_estimate = len(self._system_prompt) // 3  # conservative (chars/token can run <4 for BPE)
+        n_ctx = max(4096, system_prompt_token_estimate + max_tokens + 2048)
+        log.info(f"System prompt ~{system_prompt_token_estimate} tokens (est.) — using n_ctx={n_ctx}")
+
         self._llm = Llama(
             model_path   = self.model_name,
             n_gpu_layers = -1,
-            n_ctx        = 2048,
+            n_ctx        = n_ctx,
             verbose      = False,
         )
-        self._max_tokens   = max_tokens
-        self._system_prompt = build_system_prompt()
 
         log.info("LLM loaded.")
 
