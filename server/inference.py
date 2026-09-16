@@ -68,12 +68,15 @@ class SuggestionEngine:
 
         # n_gpu_layers=-1 offloads all layers to GPU — maximum speed.
         # n_ctx=2048 is the context window — enough for a sales conversation history.
-        # verbose=True temporarily, to diagnose a silent crash on model load.
+        # use_mmap=False: mmap-based tensor loading segfaults on RunPod's persistent
+        # volume mount — force a regular file read instead.
+        # verbose=False suppresses llama.cpp's internal logging noise.
         self._llm = Llama(
             model_path   = self.model_name,
             n_gpu_layers = -1,
             n_ctx        = 2048,
-            verbose      = True,
+            use_mmap     = False,
+            verbose      = False,
         )
         self._max_tokens   = max_tokens
         self._system_prompt = build_system_prompt()
