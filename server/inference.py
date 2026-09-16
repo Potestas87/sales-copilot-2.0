@@ -102,6 +102,89 @@ def _detect_address_from_text(text: str) -> str:
     return ""
 
 
+# ── Pain-point keyword detection (pest control domain) ──────────────────────
+# The LLM's own pain_points extraction (system prompt instruction #6) was
+# unreliable in practice — it's competing for attention with intent
+# classification and suggestion generation in the same single JSON call.
+# These keyword/phrase detectors run independently on every customer turn as
+# a backup, mirroring the name/address triggers above. Canonicalized so
+# "ant"/"ants"/"an ant" all collapse to one notepad entry instead of near-
+# duplicates.
+_PEST_CANONICAL = {
+    "ant": "ants", "ants": "ants",
+    "spider": "spiders", "spiders": "spiders",
+    "rodent": "rodents", "rodents": "rodents",
+    "mouse": "rodents", "mice": "rodents",
+    "rat": "rodents", "rats": "rodents",
+    "roach": "roaches", "roaches": "roaches",
+    "cockroach": "roaches", "cockroaches": "roaches",
+    "wasp": "wasps", "wasps": "wasps",
+    "hornet": "wasps", "hornets": "wasps",
+    "bee": "bees", "bees": "bees",
+    "termite": "termites", "termites": "termites",
+    "bed bug": "bed bugs", "bed bugs": "bed bugs",
+    "flea": "fleas", "fleas": "fleas",
+    "tick": "ticks", "ticks": "ticks",
+    "earwig": "earwigs", "earwigs": "earwigs",
+    "silverfish": "silverfish",
+    "centipede": "centipedes", "centipedes": "centipedes",
+    "scorpion": "scorpions", "scorpions": "scorpions",
+}
+_PEST_PATTERN = re.compile(
+    r"\b(" + "|".join(sorted((re.escape(k) for k in _PEST_CANONICAL), key=len, reverse=True)) + r")\b",
+    re.IGNORECASE,
+)
+
+_PRICE_CONCERN_PATTERN = re.compile(
+    r"too expensive|can'?t afford|too much money|out of (?:my |our )?budget|"
+    r"budget is (?:tight|limited)|tight budget|pricey|costly",
+    re.IGNORECASE,
+)
+
+_SAFETY_CONCERN_PATTERN = re.compile(
+    r"\b(?:kids?|children|toddler|baby|pets?|dogs?|cats?)\b[^.?!]{0,40}"
+    r"\b(?:safe|safety|chemicals?|toxic|allerg\w*)\b"
+    r"|"
+    r"\b(?:safe|safety|chemicals?|toxic)\b[^.?!]{0,40}"
+    r"\b(?:kids?|children|toddler|baby|pets?|dogs?|cats?)\b",
+    re.IGNORECASE,
+)
+
+# Treatment-cadence objections ("I don't want it that often") get hijacked by
+# the blanket pricing-question guardrail below whenever the utterance also
+# contains a token like "monthly" — checked before that guardrail so the
+# LLM's playbook-informed, efficacy-first answer can come through instead of
+# the generic pricing recap.
+_FREQUENCY_OBJECTION_PATTERN = re.compile(
+    r"couple times a year|few times a year|once or twice a year|"
+    r"don'?t (?:want|need) (?:it |that )?(?:so )?(?:frequent|often)|not that often|"
+    r"too frequent|too often|less frequently|only\s+\w+\s+times?\s+a\s+year|"
+    r"twice a year|once a year|don'?t need it that (?:much|often)|"
+    r"every (?:few|six|6)\s+months",
+    re.IGNORECASE,
+)
+
+
+def _detect_pain_points_from_text(text: str) -> list[str]:
+    """Deterministic backup for pest/price/safety pain points (see module docstring above)."""
+    t = text or ""
+    found: list[str] = []
+
+    for match in _PEST_PATTERN.finditer(t):
+        canonical = _PEST_CANONICAL[match.group(1).lower()]
+        label = f"pest: {canonical}"
+        if label not in found:
+            found.append(label)
+
+    if _PRICE_CONCERN_PATTERN.search(t) and "price concern" not in found:
+        found.append("price concern")
+
+    if _SAFETY_CONCERN_PATTERN.search(t) and "pet/people safety concern" not in found:
+        found.append("pet/people safety concern")
+
+    return found[:3]
+
+
 class SuggestionEngine:
     """
     Loads Mistral 7B and generates sales suggestions from customer utterances.
@@ -203,12 +286,11 @@ class SuggestionEngine:
     def describe_best_offer(self, conversation_turns: list[dict]) -> str:
         """Human-readable summary of the current best-offered pricing ladder."""
         best = self._derive_offer_progress(conversation_turns)["best"]
+        cadence = "/3mo (quarterly)" if best.get("service_frequency") == "quarterly" else "/2mo"
         summary = (
-            f"${best['initial']} initial, ${best['bimonthly']}/2mo, "
+            f"${best['initial']} initial, ${best['bimonthly']}{cadence}, "
             f"{best['term_months']}-month term"
         )
-        if best.get("quarterly"):
-            summary += " + quarterly billing available"
         return summary
 
     @staticmethod
@@ -271,6 +353,11 @@ class SuggestionEngine:
         triggered["customer_name"] = _detect_name_from_text(text)
         standalone_address = _detect_address_from_text(text)
 
+        # Pest/price/safety keyword detection runs on every customer turn
+        # regardless of whether anything was explicitly asked — these are
+        # things the customer volunteers, not typically prompted for.
+        triggered["pain_points"] = _detect_pain_points_from_text(text)
+
         last_turn = prior_turns[-1] if prior_turns else None
         if last_turn and last_turn.get("speaker") == "salesperson":
             asked = str(last_turn.get("transcript", "") or "")
@@ -278,12 +365,13 @@ class SuggestionEngine:
                 triggered["customer_name"] = text[:80]
             if _ADDRESS_ASK_TRIGGER.search(asked):
                 triggered["address"] = text[:80]
-            if _PAIN_POINT_ASK_TRIGGER.search(asked):
-                triggered["pain_points"] = [text[:80]]
+            if _PAIN_POINT_ASK_TRIGGER.search(asked) and text[:80] not in triggered["pain_points"]:
+                triggered["pain_points"].append(text[:80])
 
         if not triggered["address"]:
             triggered["address"] = standalone_address
 
+        triggered["pain_points"] = triggered["pain_points"][:3]
         return triggered
 
     @staticmethod
@@ -292,8 +380,13 @@ class SuggestionEngine:
         t = (text or "").lower()
         detected: dict = {}
 
-        if "quarterly" in t:
-            detected["quarterly"] = True
+        # Service-frequency tier: bimonthly (default, every 2 months) vs
+        # quarterly (every 3 months) — a lower-frequency option offered when
+        # the conversation calls for it, not just a payment-cadence label.
+        if "quarterly" in t or "every three months" in t or "every 3 months" in t:
+            detected["service_frequency"] = "quarterly"
+        elif "bimonthly" in t or "every two months" in t or "every 2 months" in t:
+            detected["service_frequency"] = "bimonthly"
 
         term_match = re.search(r"\b(12|18|24)\s*months?\b", t)
         if term_match:
@@ -333,7 +426,7 @@ class SuggestionEngine:
         Infer current/best offer and concession count from salesperson turns.
         Baseline: 24 months, $175 initial, $150 bimonthly.
         """
-        current = {"initial": 175, "bimonthly": 150, "term_months": 24, "quarterly": False}
+        current = {"initial": 175, "bimonthly": 150, "term_months": 24, "service_frequency": "bimonthly"}
         best = dict(current)
         rac_steps = 0
 
@@ -355,7 +448,7 @@ class SuggestionEngine:
                 current.get("initial", previous["initial"]) < previous["initial"]
                 or current.get("bimonthly", previous["bimonthly"]) < previous["bimonthly"]
                 or current.get("term_months", previous["term_months"]) < previous["term_months"]
-                or (current.get("quarterly") and not previous.get("quarterly"))
+                or (current.get("service_frequency") == "quarterly" and previous.get("service_frequency") != "quarterly")
             )
             if improved:
                 rac_steps += 1
@@ -363,7 +456,9 @@ class SuggestionEngine:
             best["initial"] = min(best["initial"], current.get("initial", best["initial"]))
             best["bimonthly"] = min(best["bimonthly"], current.get("bimonthly", best["bimonthly"]))
             best["term_months"] = min(best["term_months"], current.get("term_months", best["term_months"]))
-            best["quarterly"] = bool(best.get("quarterly") or current.get("quarterly"))
+            # Frequency is a tradeoff, not strictly better/worse — track the
+            # most recently stated tier rather than a "best" minimum.
+            best["service_frequency"] = current.get("service_frequency", best["service_frequency"])
 
         return {"current": current, "best": best, "rac_steps": rac_steps}
 
@@ -381,8 +476,9 @@ class SuggestionEngine:
 
         if rac_steps >= 3:
             return (
-                "Final option: I can offer quarterly billing from here so we still keep support coverage in place. "
-                "Would quarterly billing solve the concern enough to move forward?"
+                "Final option: I can move you to our quarterly tier from here — treatments every three months "
+                "instead of two — so we still keep some coverage in place at a lower commitment. "
+                "Would that solve the concern enough to move forward?"
             )
 
         # RAC 1: move initial to 99, keep bimonthly 150
@@ -480,14 +576,26 @@ class SuggestionEngine:
                 "confidence": max(float(result.get("confidence", 0.0) or 0.0), 0.75),
             }
 
+        # Treatment-cadence objections ("I don't want it that often", "only a
+        # couple times a year") must be answered on the merits first — never
+        # let them fall into the blanket pricing override below just because
+        # the utterance also contains a cadence word like "monthly". Returning
+        # None here defers to the LLM's own playbook-informed answer (see the
+        # "frequency" objection guidance and "Answer style" instruction in
+        # prompts.py), which is what makes this response feel dynamic instead
+        # of the same canned pricing paragraph every time.
+        if _FREQUENCY_OBJECTION_PATTERN.search(transcript_l):
+            return None
+
         # Pricing/total question deterministic response.
         if any(token in transcript_l for token in ("how much", "total", "price", "cost", "monthly")):
             best = progress["best"]
+            cadence_label = "every three months (quarterly)" if best.get("service_frequency") == "quarterly" else "every two months"
             return {
                 "type": "question",
                 "suggestion": (
                     f"Great question. Right now the initial setup is ${best['initial']} (normally $350), "
-                    f"then it's ${best['bimonthly']} every two months for support. "
+                    f"then it's ${best['bimonthly']} {cadence_label} for treatment. "
                     f"We start at {best['term_months']} months and if needed we can step down to 18, then 12 to find the best fit."
                 ),
                 "reasoning_short": "Pricing question answered with approved anchors and term ladder.",
@@ -514,11 +622,12 @@ class SuggestionEngine:
             regress_bimonthly = "bimonthly" in detected_offer and detected_offer["bimonthly"] > best["bimonthly"]
             regress_term = "term_months" in detected_offer and detected_offer["term_months"] > best["term_months"]
             if regress_initial or regress_bimonthly or regress_term:
+                cadence_label = "every three months (quarterly)" if best.get("service_frequency") == "quarterly" else "every two months"
                 return {
                     "type": "objection",
                     "suggestion": (
                         f"Let's stay at your best offered terms so far: ${best['initial']} initial, "
-                        f"${best['bimonthly']} every two months, {best['term_months']} months. "
+                        f"${best['bimonthly']} {cadence_label}, {best['term_months']} months. "
                         "Would getting this finalized today work for you?"
                     ),
                     "reasoning_short": "Prevented regressive offer above already-conceded terms.",

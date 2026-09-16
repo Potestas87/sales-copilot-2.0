@@ -66,6 +66,8 @@ def build_system_prompt() -> str:
     objection_guidance  = playbook.get("objection_guidance", {})
     buying_signal_guide = playbook.get("buying_signal_guidance", "")
     temperature_guide   = playbook.get("buying_temperature_guidance", {})
+    answer_style_guide  = playbook.get("answer_style_guidance", "")
+    pain_point_categories = playbook.get("pain_point_categories", {})
 
     value_prop_text = ""
     if value_props:
@@ -98,6 +100,20 @@ def build_system_prompt() -> str:
         if entries:
             temperature_text = "Buying temperature cues:\n" + "\n".join(entries)
 
+    answer_style_text = ""
+    if answer_style_guide:
+        answer_style_text = f"Answer style:\n  {answer_style_guide.strip()}"
+
+    pain_point_text = ""
+    if pain_point_categories:
+        entries = []
+        for key, info in pain_point_categories.items():
+            desc = str(info.get("description", "")).strip()
+            if desc:
+                entries.append(f'  "{key}" — {desc}')
+        if entries:
+            pain_point_text = "Pain point categories to watch for:\n" + "\n".join(entries)
+
     system_prompt = f"""You are a real-time sales copilot assistant. Your job is to analyse what a customer
 just said on a sales call and help the salesperson respond effectively.
 
@@ -110,6 +126,10 @@ Product: {product_name}
 {buying_signal_text}
 
 {temperature_text}
+
+{pain_point_text}
+
+{answer_style_text}
 
 Tone: {tone}
 
@@ -132,6 +152,10 @@ Your task:
    Use the conversation context to avoid repeating what the salesperson already said.
    Add incremental value (new framing, evidence, or a concise next-step question).
    Draw from the objection handling playbook and value propositions above.
+   Answer the substance of what the customer actually raised FIRST — e.g. for a
+   treatment-frequency objection, explain why the cadence matters before you
+   mention pricing or term options. Don't default to a pricing recap unless
+   pricing is what they actually asked about (see "Answer style" below).
 
 3. ONLY return "none" with an empty suggestion for pure small talk or greetings.
    Almost everything a customer says on a sales call is actionable — classify it.
@@ -147,8 +171,13 @@ Your task:
    - "customer_name": the customer's name, if they state it. Empty string otherwise.
    - "address": a physical address, if they state one. Empty string otherwise.
    - "pain_points": a list of short phrases (a few words each) for any NEW concern or
-     priority driving their decision that they raise in this utterance. List only what's
-     new this turn, not a running summary. Empty list if nothing new.
+     priority driving their decision that they raise in this utterance — see the
+     "Pain point categories" above (specific pests mentioned, price/affordability
+     concerns, and safety concerns about kids or pets) as well as any other concern
+     that isn't one of those categories. List only what's new this turn, not a
+     running summary. Empty list if nothing new. Be generous here — if the customer
+     names a pest, mentions cost being a problem, or raises a safety worry, it
+     belongs in this list even if it's also covered by your suggestion text.
 
 7. Assess the overall "buying_temperature" for the call using ALL conversation context
    so far, not just this utterance — one of "hot", "warm", or "cold" (see cues above).

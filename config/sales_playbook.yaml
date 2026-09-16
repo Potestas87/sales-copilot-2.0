@@ -7,18 +7,50 @@
 product_name: "NimbusCare"
 
 product_description: >
-  NimbusCare provides managed IT and software support plans for small businesses.
-  Sales calls should emphasize clear pricing, predictable support frequency, and
-  flexible term options to help customers choose a plan they can commit to.
+  NimbusCare provides residential pest control treatment plans — ants, spiders,
+  rodents, roaches, wasps, termites, and general perimeter pest control —
+  delivered on a recurring treatment schedule. Sales calls should emphasize
+  why the recommended treatment frequency matters for effectiveness, clear
+  pricing, and flexible term options to help customers choose a plan they
+  can commit to.
 
 value_propositions:
-  - "Current promotion: initial service is $175 (50% off the standard $350 initial)."
-  - "Follow-up service is every two months at $150 per visit."
+  - "Current promotion: initial treatment is $175 (50% off the standard $350 initial)."
+  - "Standard plan treats every two months (bimonthly) at $150 per visit — this cadence is what keeps the exterior barrier treatment effective and breaks pest breeding cycles before they re-establish."
+  - "A quarterly tier (treatment every three months) is available at $150 per visit when a customer needs a lower-frequency option — set the expectation that longer gaps between visits mean reduced effectiveness against active pest pressure."
   - "Default offer starts at a 24-month service term."
   - "If needed to close, the term can be stepped down from 24 months to 18 months, then to 12 months."
   - "Use term flexibility strategically to preserve value while helping the customer say yes."
 
 tone: "confident, warm, practical, and consultative — never pushy or scripted"
+
+# Speak like a real rep, not a script — vary sentence structure and word
+# choice across turns even when repeating the same core numbers or facts.
+# Never reuse the exact same sentence twice in one call.
+answer_style_guidance: >
+  Give a genuinely responsive answer to what the customer actually said before
+  pivoting to pricing, term, or next steps. Don't default to a generic pricing
+  recap unless the customer specifically asked about cost — address the
+  substance of their concern first (e.g. why a recommended treatment frequency
+  matters, why a specific pest needs a certain approach, why a safety concern
+  is handled a certain way), then connect it back to the plan if relevant.
+
+# Categories the model should watch for when extracting "pain_points" from
+# the customer's own words — the LLM instruction in prompts.py references
+# this list directly. Not exhaustive; the model should generalize.
+pain_point_categories:
+  pests:
+    description: >
+      A specific pest the customer mentions dealing with — capture the pest
+      itself (e.g. "ants", "spiders", "rodents/mice/rats", "roaches",
+      "wasps", "termites", "bed bugs", "fleas", "ticks").
+  price:
+    description: "Cost/affordability concerns — too expensive, can't afford it, tight budget."
+  safety:
+    description: >
+      Safety concerns about treatment chemicals around kids or pets —
+      e.g. worried about toxicity, allergies, or pets/children re-entering
+      treated areas.
 
 # Common objections and ideal response angles.
 # The LLM uses these as guidance, not as scripts to read verbatim.
@@ -27,16 +59,16 @@ objection_guidance:
     summary: "Too expensive"
     angle: >
       Acknowledge price pressure clearly. Re-anchor with concrete numbers:
-      initial setup is currently $175 (normally $350), and bimonthly support
-      billing is $150. If affordability is the blocker, preserve value by moving
-      term length in order: 24 months -> 18 months -> 12 months.
+      initial treatment is currently $175 (normally $350), and bimonthly
+      treatment billing is $150. If affordability is the blocker, preserve
+      value by moving term length in order: 24 months -> 18 months -> 12 months.
 
   timing:
     summary: "Not the right time / too busy right now"
     angle: >
-      Validate timing, then ask a next-step question tied to support cadence.
-      Remind them support check-ins are every two months and ask what start timing
-      would feel workable.
+      Validate timing, then ask a next-step question tied to treatment cadence.
+      Remind them treatment visits are every two months and ask what start
+      timing would feel workable.
 
   competitor:
     summary: "We already use [competitor]"
@@ -47,8 +79,8 @@ objection_guidance:
   complexity:
     summary: "Seems complicated / hard to adopt"
     angle: >
-      Keep it simple and concrete: one initial setup at $175 and then a
-      predictable every-two-month support billing at $150. Explain options briefly
+      Keep it simple and concrete: one initial treatment at $175 and then a
+      predictable every-two-month visit at $150. Explain options briefly
       and ask one clarifying question rather than over-explaining.
 
   authority:
@@ -70,7 +102,7 @@ objection_guidance:
     angle: >
       Don't argue that the contract doesn't matter — explain why it actually helps
       them: it locks in today's promotional pricing so it can't rise mid-term, it
-      guarantees the every-two-month support visits are scheduled and staffed for
+      guarantees the every-two-month treatment visits are scheduled and staffed for
       them, and it protects them from being deprioritized versus month-to-month
       customers. Frame it as a commitment from NimbusCare to them, not just the
       reverse. If resistance remains, use the term ladder (24 -> 18 -> 12 months)
@@ -81,15 +113,37 @@ objection_guidance:
     angle: >
       Don't get defensive. Acknowledge it's fair to be cautious with an unfamiliar
       company, then ground trust in specifics: the promotional pricing is
-      transparent ($175 initial, normally $350), support is on a predictable
+      transparent ($175 initial, normally $350), treatment is on a predictable
       every-two-month cadence, and terms step down (24/18/12 months) if they want
       a shorter commitment while they get comfortable.
+
+  frequency:
+    summary: "Don't want treatment that often / only want it a couple times a year"
+    angle: >
+      Answer the effectiveness concern FIRST, before any pricing or term talk:
+      exterior barrier treatments break down over time and pest pressure
+      rebuilds between visits, so the standard every-two-month cadence exists
+      to break breeding cycles before pests can re-establish — it's not
+      arbitrary. Only after explaining why the cadence matters, offer the
+      quarterly (every three months) tier as a lower-frequency option, and be
+      upfront that it comes with reduced effectiveness against active
+      infestations compared to the bimonthly plan.
+
+  safety:
+    summary: "Worried about chemicals around kids or pets"
+    angle: >
+      Take the concern seriously — don't minimize it or rush past it.
+      Explain that treatments use EPA-registered products applied by trained
+      technicians per label safety guidelines, with dry times observed before
+      kids or pets re-enter treated areas. Offer to flag any specific safety
+      needs (e.g. a pet-safe zone, a play area to avoid) for the technician
+      ahead of the visit.
 
 buying_signal_guidance: >
   When the customer shows interest or asks about next steps, move toward closing
   with a clear recap of plan economics and term. Confirm: $175 initial (promo),
-  $150 every-two-month support billing, and default 24-month term with 18/12-month
-  options only as needed to close.
+  $150 every-two-month treatment billing, and default 24-month term with
+  18/12-month options only as needed to close.
 
 # Cues the LLM should weigh when assessing overall buying temperature for the
 # call (see the "buying_temperature" instruction in prompts.py). These are

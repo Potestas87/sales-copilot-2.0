@@ -193,7 +193,7 @@ def test_rac_fallback_goes_to_quarterly_after_three_steps():
     ]
     result = {"type": "none", "suggestion": "", "reasoning_short": "", "confidence": 0.2}
     out = engine._ensure_actionable_result(result, "Still too high for me.", turns)
-    assert "quarterly billing" in out["suggestion"].lower()
+    assert "quarterly" in out["suggestion"].lower()
 
 
 # ── Deal notepad: extraction, reattachment, merge, package summary ────────────
@@ -374,3 +374,94 @@ def test_detect_triggered_fields_no_match_without_pattern_or_ask():
     engine = _engine()
     out = engine.detect_triggered_fields([], "customer", "I think that works for us")
     assert out == {"customer_name": "", "address": "", "pain_points": []}
+
+
+# ── Pain-point keyword detection (pest control domain) ─────────────────────────
+
+def test_detect_triggered_fields_captures_pest_mentions():
+    engine = _engine()
+    out = engine.detect_triggered_fields([], "customer", "We've been seeing a lot of ants and spiders lately")
+    assert out["pain_points"] == ["pest: ants", "pest: spiders"]
+
+
+def test_detect_triggered_fields_canonicalizes_pest_variants():
+    engine = _engine()
+    out = engine.detect_triggered_fields([], "customer", "we have mice and also a couple rats in the garage")
+    assert out["pain_points"] == ["pest: rodents"]
+
+
+def test_detect_triggered_fields_captures_price_concern():
+    engine = _engine()
+    out = engine.detect_triggered_fields([], "customer", "Honestly that's too expensive for us right now")
+    assert "price concern" in out["pain_points"]
+
+
+def test_detect_triggered_fields_captures_safety_concern():
+    engine = _engine()
+    out = engine.detect_triggered_fields([], "customer", "Is this safe to use with my dog and kids around?")
+    assert "pet/people safety concern" in out["pain_points"]
+
+
+def test_detect_triggered_fields_combines_pest_and_price_capped_at_three():
+    engine = _engine()
+    out = engine.detect_triggered_fields(
+        [], "customer", "We have ants, spiders, and roaches, and honestly it's too expensive"
+    )
+    assert len(out["pain_points"]) == 3
+    assert out["pain_points"][:3] == ["pest: ants", "pest: spiders", "pest: roaches"]
+
+
+def test_detect_triggered_fields_salesperson_pest_mention_ignored():
+    engine = _engine()
+    out = engine.detect_triggered_fields([], "salesperson", "A lot of customers deal with ants and spiders")
+    assert out["pain_points"] == []
+
+
+# ── Frequency objection guardrail fix ───────────────────────────────────────────
+
+def test_frequency_objection_is_not_hijacked_by_pricing_override():
+    engine = _engine()
+    progress = engine._derive_offer_progress([])
+    result = {"type": "objection", "suggestion": "", "reasoning_short": "", "confidence": 0.5}
+    out = engine._apply_business_rules(result, "I don't want monthly treatments, maybe a couple times a year", progress)
+    assert out is None  # defers to the LLM instead of the canned pricing paragraph
+
+
+def test_pure_pricing_question_still_gets_deterministic_answer():
+    engine = _engine()
+    progress = engine._derive_offer_progress([])
+    result = {"type": "question", "suggestion": "", "reasoning_short": "", "confidence": 0.5}
+    out = engine._apply_business_rules(result, "How much does this cost per month?", progress)
+    assert out is not None
+    assert "$175" in out["suggestion"]
+
+
+# ── Quarterly service-frequency tier ────────────────────────────────────────────
+
+def test_detect_offer_from_text_captures_quarterly_frequency():
+    engine = _engine()
+    detected = engine._detect_offer_from_text("We can switch you to quarterly visits instead.")
+    assert detected["service_frequency"] == "quarterly"
+
+
+def test_derive_offer_progress_tracks_quarterly_after_mention():
+    engine = _engine()
+    turns = [{"speaker": "salesperson", "transcript": "I can move you to quarterly treatments instead."}]
+    progress = engine._derive_offer_progress(turns)
+    assert progress["best"]["service_frequency"] == "quarterly"
+
+
+def test_describe_best_offer_reflects_quarterly_tier():
+    engine = _engine()
+    turns = [{"speaker": "salesperson", "transcript": "Let's do quarterly visits at $150."}]
+    summary = engine.describe_best_offer(turns)
+    assert "quarterly" in summary.lower()
+
+
+def test_pricing_override_uses_quarterly_cadence_when_active():
+    engine = _engine()
+    turns = [{"speaker": "salesperson", "transcript": "I can move you to quarterly treatments instead."}]
+    progress = engine._derive_offer_progress(turns)
+    result = {"type": "question", "suggestion": "", "reasoning_short": "", "confidence": 0.5}
+    out = engine._apply_business_rules(result, "How much does that cost?", progress)
+    assert "quarterly" in out["suggestion"].lower()
