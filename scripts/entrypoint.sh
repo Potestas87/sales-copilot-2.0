@@ -9,15 +9,21 @@ set -e
 MODEL_DIR="/workspace/models"
 MODEL_FILE="mistral-7b-instruct-v0.2.Q4_K_M.secondstate.gguf"
 MODEL_PATH="${MODEL_DIR}/${MODEL_FILE}"
-# Re-quantized by second-state (actively maintained) instead of TheBloke
-# (inactive since 2023) - the old file was crashing llama-cpp-python's
-# tensor loader identically on CPU and GPU, on every GPU type tried, with
-# raw disk reads and memory both proven fine - pointing at a GGUF/quant
-# compatibility issue with this specific file rather than the environment.
 MODEL_URL="https://huggingface.co/second-state/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/Mistral-7B-Instruct-v0.2-Q4_K_M.gguf"
 
-# Create model directory on the persistent volume
+# llama.cpp's loader (threaded/random-access I/O) crashes silently and
+# deterministically when reading the model directly off RunPod's
+# persistent volume mount - reproduced across two different GGUF sources,
+# CPU-only and GPU-offloaded loading, and two GPU types, even though a
+# plain sequential `dd` read of the same file succeeds instantly. Keep the
+# download cached on the persistent volume, but load from a local copy on
+# the container's own ephemeral disk to work around the volume's I/O
+# incompatibility.
+LOCAL_MODEL_PATH="/app/models/${MODEL_FILE}"
+
+# Create model directories
 mkdir -p "${MODEL_DIR}"
+mkdir -p "$(dirname "${LOCAL_MODEL_PATH}")"
 
 # Download the model if it doesn't already exist
 if [ ! -f "${MODEL_PATH}" ]; then
@@ -29,8 +35,12 @@ else
     echo "=== Model already exists at ${MODEL_PATH}, skipping download ==="
 fi
 
+echo "=== Copying model to local container disk ==="
+cp "${MODEL_PATH}" "${LOCAL_MODEL_PATH}"
+echo "=== Local copy ready at ${LOCAL_MODEL_PATH} ==="
+
 # Export the model path so the server can find it
-export LLM_MODEL_PATH="${MODEL_PATH}"
+export LLM_MODEL_PATH="${LOCAL_MODEL_PATH}"
 
 # Start the FastAPI server
 if ! command -v python3.11 >/dev/null 2>&1; then
