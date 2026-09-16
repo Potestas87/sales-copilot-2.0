@@ -69,14 +69,24 @@ _ADDRESS_PATTERN = re.compile(
 
 _NAME_ASK_TRIGGER = re.compile(
     r"what'?s your name|what is your name|who am i (?:speaking|talking) (?:with|to)|"
-    r"can i get your name|can i have your name",
+    r"can i get your name|can i have your name|may i (?:ask|get|have) your name|"
+    r"who do i have the pleasure of (?:speaking|talking) (?:with|to)|"
+    r"and (?:you are|your name is)\??|sorry,? what was your name(?: again)?|"
+    r"who'?s this|what do (?:i|we) call you|how do i address you",
     re.IGNORECASE,
 )
 _ADDRESS_ASK_TRIGGER = re.compile(
     r"what'?s your (?:service |property |home )?address|"
     r"what is your (?:service |property |home )?address|"
     r"where (?:do you live|is the (?:service|property) address)|"
-    r"can i get your address|can i have your address",
+    r"can i get your address|can i have your address|"
+    r"where'?s the (?:property|house|home)(?: located| at)?|"
+    r"what'?s the (?:property|service|home) address|"
+    r"where should (?:the|our) (?:technician|tech|team) (?:come|go|meet you)|"
+    r"where are we (?:treating|doing (?:the|this) (?:treatment|service))|"
+    r"what'?s the service location|where do you need (?:the )?service|"
+    r"what'?s the address for (?:the )?(?:treatment|service)|"
+    r"where'?s (?:this|that) (?:property|house) located",
     re.IGNORECASE,
 )
 _PAIN_POINT_ASK_TRIGGER = re.compile(
@@ -135,6 +145,35 @@ _PEST_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Locations in/around the house where pest activity has been seen — captured
+# alongside the pest itself (e.g. "ants in the attic") so the notepad and
+# the LLM's own answer can reference the specific spot, not just the pest.
+_LOCATION_CANONICAL = {
+    "attic": "attic", "attics": "attic",
+    "basement": "basement", "basements": "basement",
+    "crawl space": "crawl space", "crawlspace": "crawl space", "crawl spaces": "crawl space",
+    "garage": "garage", "garages": "garage",
+    "kitchen": "kitchen", "kitchens": "kitchen",
+    "bathroom": "bathroom", "bathrooms": "bathroom",
+    "bedroom": "bedroom", "bedrooms": "bedroom",
+    "closet": "closet", "closets": "closet",
+    "walls": "walls", "wall": "walls",
+    "ceiling": "ceiling", "ceilings": "ceiling",
+    "backyard": "yard", "front yard": "yard", "yard": "yard",
+    "porch": "porch", "deck": "deck", "patio": "patio",
+    "baseboards": "baseboards", "baseboard": "baseboards",
+    "foundation": "foundation",
+    "windows": "windows", "window": "windows",
+    "doors": "doors", "door": "doors",
+    "pantry": "pantry", "pantries": "pantry",
+    "under the sink": "under the sink",
+    "vents": "vents", "vent": "vents",
+}
+_LOCATION_PATTERN = re.compile(
+    r"\b(" + "|".join(sorted((re.escape(k) for k in _LOCATION_CANONICAL), key=len, reverse=True)) + r")\b",
+    re.IGNORECASE,
+)
+
 _PRICE_CONCERN_PATTERN = re.compile(
     r"too expensive|can'?t afford|too much money|out of (?:my |our )?budget|"
     r"budget is (?:tight|limited)|tight budget|pricey|costly",
@@ -164,9 +203,30 @@ _FREQUENCY_OBJECTION_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# "I got them sprayed once and they went away" / "never had them before in
+# X years living here" — like the frequency objection above, these have
+# specific playbook guidance (see objection_guidance.one_time_worked and
+# .no_prior_history) and must not fall into the generic pricing/RAC fallback
+# when the LLM doesn't produce something actionable on its own.
+_ONE_TIME_WORKED_PATTERN = re.compile(
+    r"(?:sprayed|treated) (?:it |them )?once|"
+    r"(?:did|had) it once and (?:they|it) (?:went away|left|disappeared)|"
+    r"went away after (?:one|1|a single) (?:spray|treatment)|"
+    r"only (?:needed|had) (?:it|one treatment) once|"
+    r"one treatment and (?:they|it) (?:were|was) gone",
+    re.IGNORECASE,
+)
+_NO_PRIOR_HISTORY_PATTERN = re.compile(
+    r"never (?:had|seen) (?:them|it|any(?: of)? (?:that|those|these))? ?before|"
+    r"(?:in|for) \d+\s*years? (?:living|(?:i'?ve )?been) here[^.?!]{0,20}(?:never|haven'?t)|"
+    r"haven'?t (?:had|seen) (?:a|any) (?:problem|issue|pest)s? (?:in|for) \d+\s*years?|"
+    r"this (?:is|has never been) the first time",
+    re.IGNORECASE,
+)
+
 
 def _detect_pain_points_from_text(text: str) -> list[str]:
-    """Deterministic backup for pest/price/safety pain points (see module docstring above)."""
+    """Deterministic backup for pest/location/price/safety pain points (see module docstring above)."""
     t = text or ""
     found: list[str] = []
 
@@ -176,13 +236,19 @@ def _detect_pain_points_from_text(text: str) -> list[str]:
         if label not in found:
             found.append(label)
 
+    for match in _LOCATION_PATTERN.finditer(t):
+        canonical = _LOCATION_CANONICAL[match.group(1).lower()]
+        label = f"location: {canonical}"
+        if label not in found:
+            found.append(label)
+
     if _PRICE_CONCERN_PATTERN.search(t) and "price concern" not in found:
         found.append("price concern")
 
     if _SAFETY_CONCERN_PATTERN.search(t) and "pet/people safety concern" not in found:
         found.append("pet/people safety concern")
 
-    return found[:3]
+    return found[:4]
 
 
 # ── Buying temperature (deterministic, context-aware) ───────────────────────
@@ -281,13 +347,24 @@ class SuggestionEngine:
 
         log.info("LLM loaded.")
 
-    def analyse(self, transcript: str, conversation_turns: Optional[list[dict]] = None) -> dict:
+    def analyse(
+        self,
+        transcript: str,
+        conversation_turns: Optional[list[dict]] = None,
+        known_pain_points: Optional[list[str]] = None,
+    ) -> dict:
         """
         Classify and respond to a customer utterance.
 
         Args:
             transcript: Text of what the customer just said.
             conversation_turns: Recent dialogue turns (speaker + transcript).
+            known_pain_points: Pain points already captured in the session's
+                notepad (e.g. "pest: ants", "location: attic") — used only by
+                the last-resort deterministic fallback below, so it can
+                reference the customer's specific problem instead of
+                defaulting to a generic pricing ladder when the LLM itself
+                doesn't produce anything actionable.
 
         Returns:
             dict with keys:
@@ -315,7 +392,9 @@ class SuggestionEngine:
 
         raw_text = response["choices"][0]["message"]["content"].strip()
         parsed = self._parse_response(raw_text, transcript)
-        final = self._ensure_actionable_result(parsed, transcript, conversation_turns or [])
+        final = self._ensure_actionable_result(
+            parsed, transcript, conversation_turns or [], known_pain_points or []
+        )
         return self._finalize_result(final, parsed)
 
     @staticmethod
@@ -425,7 +504,7 @@ class SuggestionEngine:
         if not triggered["address"]:
             triggered["address"] = standalone_address
 
-        triggered["pain_points"] = triggered["pain_points"][:3]
+        triggered["pain_points"] = triggered["pain_points"][:4]
         return triggered
 
     @staticmethod
@@ -575,7 +654,61 @@ class SuggestionEngine:
             f"on a {term}-month term. If this solves the concern, we can get this locked in now."
         )
 
-    def _ensure_actionable_result(self, result: dict, transcript: str, conversation_turns: list[dict]) -> dict:
+    @staticmethod
+    def _one_time_worked_fallback() -> str:
+        return (
+            "That makes sense — a single treatment does knock down what's active at the time. The gap is "
+            "that it doesn't leave a lasting barrier, so once it wears down, usually within a couple months, "
+            "pests can re-establish from nests or entry points that were never addressed. The recurring "
+            "visits are what keep that barrier in place so they don't just come back."
+        )
+
+    @staticmethod
+    def _no_prior_history_fallback() -> str:
+        return (
+            "That's actually really common to hear. Pest pressure changes over time from weather shifts, "
+            "nearby construction, or even a neighbor's treatment pushing activity elsewhere, and a lot of "
+            "infestations build for a while before anyone notices. Treating proactively now is a lot cheaper "
+            "and easier than dealing with it after it's already established."
+        )
+
+    @staticmethod
+    def _explain_service_fallback(pain_points: list[str]) -> Optional[str]:
+        """
+        Pain-point-aware fallback used before the generic pricing ladder —
+        references a pest/location the customer already mentioned so the
+        response moves the sale forward with something specific to their
+        problem, not just another price concession.
+        """
+        pest = next((p.split(": ", 1)[1] for p in pain_points if p.startswith("pest: ")), None)
+        location = next((p.split(": ", 1)[1] for p in pain_points if p.startswith("location: ")), None)
+
+        if pest and location:
+            return (
+                f"Since you mentioned {pest} in the {location}, every visit gives that spot specific "
+                f"attention — targeting nesting and entry points there, not just a general perimeter spray. "
+                f"That's what actually keeps them from coming back. Does that address what you're seeing?"
+            )
+        if pest:
+            return (
+                f"Since {pest} is the main issue, every visit specifically targets their nesting sites and "
+                f"entry points, not just a general perimeter spray — that's what keeps them from coming back. "
+                f"Does that address the concern?"
+            )
+        if location:
+            return (
+                f"We'll make sure the {location} gets specific attention on every visit since that's where "
+                f"you've been seeing activity, not just a general perimeter treatment. Does that help?"
+            )
+        return None
+
+    def _ensure_actionable_result(
+        self,
+        result: dict,
+        transcript: str,
+        conversation_turns: list[dict],
+        known_pain_points: Optional[list[str]] = None,
+    ) -> dict:
         """Force an actionable fallback for non-empty customer transcripts when configured."""
         transcript_text = (transcript or "").strip()
         if not transcript_text:
@@ -599,6 +732,37 @@ class SuggestionEngine:
 
         if suggestion_type != "none" and suggestion_text:
             return result
+
+        # The LLM didn't produce anything actionable on its own — prefer a
+        # content-specific fallback over the generic pricing ladder so this
+        # doesn't always land on a price drop. Checked in order: named
+        # objections with their own playbook angle, then a pain-point-aware
+        # service explanation, and only then the pricing/term ladder as the
+        # true last resort.
+        transcript_l = transcript_text.lower()
+        if _ONE_TIME_WORKED_PATTERN.search(transcript_l):
+            return {
+                "type": "objection",
+                "suggestion": self._one_time_worked_fallback(),
+                "reasoning_short": reasoning_short or "One-time-treatment objection answered with barrier-maintenance framing.",
+                "confidence": max(confidence, 0.4),
+            }
+        if _NO_PRIOR_HISTORY_PATTERN.search(transcript_l):
+            return {
+                "type": "objection",
+                "suggestion": self._no_prior_history_fallback(),
+                "reasoning_short": reasoning_short or "No-prior-history objection answered with proactive-treatment framing.",
+                "confidence": max(confidence, 0.4),
+            }
+
+        explain_service = self._explain_service_fallback(known_pain_points or [])
+        if explain_service:
+            return {
+                "type": "question",
+                "suggestion": explain_service,
+                "reasoning_short": reasoning_short or "Service explanation tied to a previously mentioned pain point.",
+                "confidence": max(confidence, 0.4),
+            }
 
         # Deterministic RAC fallback uses what has already been offered.
         rac_fallback = self._next_rac_suggestion(progress, transcript_text)
@@ -644,6 +808,13 @@ class SuggestionEngine:
         # prompts.py), which is what makes this response feel dynamic instead
         # of the same canned pricing paragraph every time.
         if _FREQUENCY_OBJECTION_PATTERN.search(transcript_l):
+            return None
+
+        # Same reasoning for "I got them sprayed once and they went away" and
+        # "never had them before in X years" — each has specific playbook
+        # guidance (objection_guidance.one_time_worked / .no_prior_history)
+        # that a stray price word shouldn't be allowed to preempt.
+        if _ONE_TIME_WORKED_PATTERN.search(transcript_l) or _NO_PRIOR_HISTORY_PATTERN.search(transcript_l):
             return None
 
         # Pricing/total question deterministic response.
@@ -814,7 +985,7 @@ class SuggestionEngine:
             raw_pain_points = parsed.get("pain_points") or []
             if not isinstance(raw_pain_points, list):
                 raw_pain_points = []
-            pain_points = [str(p or "").strip()[:80] for p in raw_pain_points if str(p or "").strip()][:3]
+            pain_points = [str(p or "").strip()[:80] for p in raw_pain_points if str(p or "").strip()][:4]
 
             buying_temperature = str(parsed.get("buying_temperature", "") or "").strip().lower()
             if buying_temperature not in {"hot", "warm", "cold"}:

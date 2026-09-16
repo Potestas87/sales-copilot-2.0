@@ -386,7 +386,7 @@ def test_detect_triggered_fields_captures_pest_mentions():
 
 def test_detect_triggered_fields_canonicalizes_pest_variants():
     engine = _engine()
-    out = engine.detect_triggered_fields([], "customer", "we have mice and also a couple rats in the garage")
+    out = engine.detect_triggered_fields([], "customer", "we have mice and also a couple rats scurrying around")
     assert out["pain_points"] == ["pest: rodents"]
 
 
@@ -402,13 +402,15 @@ def test_detect_triggered_fields_captures_safety_concern():
     assert "pet/people safety concern" in out["pain_points"]
 
 
-def test_detect_triggered_fields_combines_pest_and_price_capped_at_three():
+def test_detect_triggered_fields_combines_categories_capped_at_four():
     engine = _engine()
     out = engine.detect_triggered_fields(
-        [], "customer", "We have ants, spiders, and roaches, and honestly it's too expensive"
+        [],
+        "customer",
+        "We have ants, spiders, and roaches in the attic, and honestly it's too expensive and I'm worried about my dog's safety",
     )
-    assert len(out["pain_points"]) == 3
-    assert out["pain_points"][:3] == ["pest: ants", "pest: spiders", "pest: roaches"]
+    assert len(out["pain_points"]) == 4
+    assert out["pain_points"] == ["pest: ants", "pest: spiders", "pest: roaches", "location: attic"]
 
 
 def test_detect_triggered_fields_salesperson_pest_mention_ignored():
@@ -509,3 +511,121 @@ def test_buying_temperature_empty_with_no_history():
     engine = _engine()
     out = engine.detect_buying_temperature("hello", [])
     assert out == ""
+
+
+# ── Location pain-point detection ───────────────────────────────────────────────
+
+def test_detect_triggered_fields_captures_location_alone():
+    engine = _engine()
+    out = engine.detect_triggered_fields([], "customer", "we've been seeing activity in the attic")
+    assert out["pain_points"] == ["location: attic"]
+
+
+def test_detect_triggered_fields_captures_pest_and_location_together():
+    engine = _engine()
+    out = engine.detect_triggered_fields([], "customer", "we have ants in the attic")
+    assert out["pain_points"] == ["pest: ants", "location: attic"]
+
+
+def test_detect_triggered_fields_canonicalizes_location_variants():
+    engine = _engine()
+    out = engine.detect_triggered_fields([], "customer", "mostly out in the backyard and near the crawlspace")
+    assert out["pain_points"] == ["location: yard", "location: crawl space"]
+
+
+# ── Expanded name/address ask triggers ──────────────────────────────────────────
+
+def test_name_trigger_recognizes_and_you_are_phrasing():
+    engine = _engine()
+    prior = [{"speaker": "salesperson", "transcript": "And you are?"}]
+    out = engine.detect_triggered_fields(prior, "customer", "Mike")
+    assert out["customer_name"] == "Mike"
+
+
+def test_name_trigger_recognizes_pleasure_of_speaking_phrasing():
+    engine = _engine()
+    prior = [{"speaker": "salesperson", "transcript": "Who do I have the pleasure of speaking with today?"}]
+    out = engine.detect_triggered_fields(prior, "customer", "Janet Cole")
+    assert out["customer_name"] == "Janet Cole"
+
+
+def test_address_trigger_recognizes_where_should_technician_come():
+    engine = _engine()
+    prior = [{"speaker": "salesperson", "transcript": "Where should our technician come out to?"}]
+    out = engine.detect_triggered_fields(prior, "customer", "42 Willow Creek Drive")
+    assert out["address"] == "42 Willow Creek Drive"
+
+
+def test_address_trigger_recognizes_service_location_phrasing():
+    engine = _engine()
+    prior = [{"speaker": "salesperson", "transcript": "What's the service location?"}]
+    out = engine.detect_triggered_fields(prior, "customer", "somewhere off Route 9, the Miller place")
+    assert out["address"] == "somewhere off Route 9, the Miller place"
+
+
+# ── One-time-treatment / no-prior-history objections ────────────────────────────
+
+def test_frequency_style_objections_defer_to_llm_not_pricing_override():
+    engine = _engine()
+    progress = engine._derive_offer_progress([])
+    result = {"type": "objection", "suggestion": "", "reasoning_short": "", "confidence": 0.5}
+
+    out = engine._apply_business_rules(result, "I got them sprayed once and they went away", progress)
+    assert out is None
+
+    out = engine._apply_business_rules(result, "I've never had them before in 10 years living here", progress)
+    assert out is None
+
+
+def test_ensure_actionable_result_falls_back_to_one_time_worked_explanation():
+    engine = _engine()
+    result = {"type": "none", "suggestion": "", "reasoning_short": "", "confidence": 0.2}
+    out = engine._ensure_actionable_result(result, "I had it sprayed once and they went away", [])
+    assert out["type"] == "objection"
+    assert "barrier" in out["suggestion"].lower()
+
+
+def test_ensure_actionable_result_falls_back_to_no_prior_history_explanation():
+    engine = _engine()
+    result = {"type": "none", "suggestion": "", "reasoning_short": "", "confidence": 0.2}
+    out = engine._ensure_actionable_result(result, "I've never had them before in 10 years living here", [])
+    assert out["type"] == "objection"
+    assert "proactive" in out["suggestion"].lower() or "common" in out["suggestion"].lower()
+
+
+# ── Pain-point-aware fallback (not just pricing) ────────────────────────────────
+
+def test_explain_service_fallback_references_pest_and_location():
+    engine = _engine()
+    out = engine._explain_service_fallback(["pest: ants", "location: attic"])
+    assert "ants" in out.lower() and "attic" in out.lower()
+
+
+def test_explain_service_fallback_references_pest_only():
+    engine = _engine()
+    out = engine._explain_service_fallback(["pest: spiders"])
+    assert "spiders" in out.lower()
+
+
+def test_explain_service_fallback_none_when_no_pain_points():
+    engine = _engine()
+    out = engine._explain_service_fallback([])
+    assert out is None
+
+
+def test_ensure_actionable_result_prefers_pain_point_fallback_over_pricing_ladder():
+    engine = _engine()
+    result = {"type": "none", "suggestion": "", "reasoning_short": "", "confidence": 0.2}
+    out = engine._ensure_actionable_result(
+        result, "I'm still thinking about it", [], known_pain_points=["pest: ants", "location: attic"]
+    )
+    assert "ants" in out["suggestion"].lower()
+    assert "attic" in out["suggestion"].lower()
+    assert "initial" not in out["suggestion"].lower()  # not the generic pricing ladder
+
+
+def test_ensure_actionable_result_falls_back_to_pricing_ladder_without_pain_points():
+    engine = _engine()
+    result = {"type": "none", "suggestion": "", "reasoning_short": "", "confidence": 0.2}
+    out = engine._ensure_actionable_result(result, "I'm still thinking about it", [], known_pain_points=[])
+    assert "initial" in out["suggestion"].lower()

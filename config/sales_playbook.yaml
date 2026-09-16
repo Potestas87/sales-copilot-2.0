@@ -34,6 +34,23 @@ answer_style_guidance: >
   substance of their concern first (e.g. why a recommended treatment frequency
   matters, why a specific pest needs a certain approach, why a safety concern
   is handled a certain way), then connect it back to the plan if relevant.
+  If the customer has already mentioned a specific pest or a specific location
+  in the house (e.g. ants in the attic, spiders in the garage) earlier in the
+  conversation, reference it by name in your answer instead of speaking
+  generically — it should sound like you're tracking their specific problem,
+  not reading a script. Never reuse the same sentence or opening line twice in
+  one call, even when the underlying numbers repeat.
+
+# What a treatment visit actually involves — material the model can draw on
+# to explain the service itself, not just answer objections or quote price.
+service_explanation: >
+  Each visit includes an exterior perimeter treatment (foundation, eaves,
+  windows, and door entry points) plus targeted interior treatment when
+  needed. Technicians give extra attention to any specific pest or location
+  the customer has flagged (e.g. an attic, a crawl space, ants near a
+  specific door) and check for new activity each visit rather than repeating
+  an identical routine — the plan adapts to what's actually happening at the
+  property, not a fixed script.
 
 # Categories the model should watch for when extracting "pain_points" from
 # the customer's own words — the LLM instruction in prompts.py references
@@ -44,6 +61,12 @@ pain_point_categories:
       A specific pest the customer mentions dealing with — capture the pest
       itself (e.g. "ants", "spiders", "rodents/mice/rats", "roaches",
       "wasps", "termites", "bed bugs", "fleas", "ticks").
+  location:
+    description: >
+      A specific location in or around the house where pest activity has
+      been seen — e.g. "attic", "basement", "crawl space", "garage",
+      "kitchen", "walls", "yard". Capture it alongside the pest when both
+      are mentioned together (e.g. "ants in the attic").
   price:
     description: "Cost/affordability concerns — too expensive, can't afford it, tight budget."
   safety:
@@ -138,6 +161,30 @@ objection_guidance:
       kids or pets re-enter treated areas. Offer to flag any specific safety
       needs (e.g. a pet-safe zone, a play area to avoid) for the technician
       ahead of the visit.
+
+  one_time_worked:
+    summary: "I got them sprayed once and then they went away"
+    angle: >
+      Don't argue with their experience — validate that a single treatment
+      does knock down what's active at the time. Then explain the gap: a
+      one-time spray doesn't leave a lasting barrier, and once it wears down
+      (typically within a couple months) pests can re-establish from nests
+      or entry points that were never addressed. The recurring visits exist
+      specifically to maintain that barrier before it breaks down, not
+      because the first treatment failed. If they mentioned a specific pest
+      or location earlier, tie the explanation to it directly.
+
+  no_prior_history:
+    summary: "Never had pests before in X years living here"
+    angle: >
+      Acknowledge that's genuinely common to hear, then explain why it
+      doesn't mean they're not at risk now: pest pressure changes over time
+      from weather shifts, nearby construction, or a neighbor's treatment
+      pushing activity elsewhere — and many infestations (termites, ants
+      nesting inside a wall) build for a while before anyone notices them.
+      Frame proactive treatment as cheaper and easier than reactive
+      treatment after a problem is already established, rather than
+      something they only need once they've seen a pest.
 
 buying_signal_guidance: >
   When the customer shows interest or asks about next steps, move toward closing

@@ -224,7 +224,9 @@ async def websocket_endpoint(websocket: WebSocket):
             # ── Generate suggestion (customer turns only) ─────────────────────
             if payload.speaker == "customer":
                 prior_turns = conversation_turns[:-1]
-                result = suggestion_engine.analyse(transcript, prior_turns)
+                result = suggestion_engine.analyse(
+                    transcript, prior_turns, known_pain_points=notepad_state.get("pain_points", [])
+                )
 
                 # Deterministic regex/adjacency triggers back up the LLM's own
                 # extraction — a confident trigger match always wins so a
